@@ -10,7 +10,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
 try:
-    from autoTrader.strategy.discovery_mapping import (
+    from .discovery_mapping import (
         map_indicator_state,
         BULLISH_PATTERNS,
         BEARISH_PATTERNS,
@@ -23,16 +23,19 @@ try:
         validate_timeframe_group
     )
     MAPPER_AVAILABLE = True
-except ImportError:
-    print("Warning: discovery_mapping.py not found. System cannot function without it.")
+except ImportError as e:
+    # Use the error for debugging but still rely on the absolute/sys.path injection for discovery
+    print(f"Warning: discovery_mapping.py import failed: {e}")
+    # Fallback/alternative import attempts are too complex. We assume success after sys.path fix.
+    print("FATAL: Cannot load required mapping file. System cannot proceed.")
     MAPPER_AVAILABLE = False
     exit(1)
 
-from autoTrader.strategy.analysis_trend import TrendAnalysisSystem
-from autoTrader.strategy.analysis_pullback import PullbackAnalysisSystem
-from autoTrader.strategy.analysis_advanced_regime import AdvancedRegimeDetectionSystem
-from autoTrader.strategy.analysis_confluence_scoring import ConfluenceScoringSystem
-from autoTrader.strategy.core import StrategyDiscoverySystem
+from .analysis_trend import TrendAnalysisSystem
+from .analysis_pullback import PullbackAnalysisSystem
+from .analysis_advanced_regime import AdvancedRegimeDetectionSystem
+from .analysis_confluence_scoring import ConfluenceScoringSystem
+from .core import StrategyDiscoverySystem
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -50,6 +53,11 @@ if __name__ == "__main__":
         price_threshold=0.005,
         n_jobs=-1
     )
+    
+    system.trend_analyzer    = TrendAnalysisSystem()
+    system.pullback_analyzer = PullbackAnalysisSystem()
+    system.regime_detector   = AdvancedRegimeDetectionSystem()
+    system.confluence_scorer = ConfluenceScoringSystem()
     
     if not system.load_data():
         print("❌ Failed to load data. Exiting.")

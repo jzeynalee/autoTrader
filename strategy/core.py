@@ -9,13 +9,13 @@ from functools import lru_cache
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
-from autoTrader.strategy.analysis_trend import TrendAnalysisSystem
-from autoTrader.strategy.analysis_pullback import PullbackAnalysisSystem
-from autoTrader.strategy.analysis_advanced_regime import AdvancedRegimeDetectionSystem
-from autoTrader.strategy.analysis_confluence_scoring import ConfluenceScoringSystem
+from .analysis_trend import TrendAnalysisSystem
+from .analysis_pullback import PullbackAnalysisSystem
+from .analysis_advanced_regime import AdvancedRegimeDetectionSystem
+from .analysis_confluence_scoring import ConfluenceScoringSystem
 
 try:
-    from discovery_mapping import (
+    from .discovery_mapping import (
         map_indicator_state,
         BULLISH_PATTERNS,
         BEARISH_PATTERNS,
@@ -29,10 +29,23 @@ try:
     )
     MAPPER_AVAILABLE = True
 except ImportError:
-    print("Warning: discovery_mapping.py not found. System cannot function without it.")
-    MAPPER_AVAILABLE = False
-    exit(1)
+    # CRITICAL: Define DUMMY placeholders to prevent NameErrors in core.py methods
+    # We exit gracefully later in strategy_main.py, but core.py must not crash its imports.
+    def map_indicator_state(*args, **kwargs):
+        raise NotImplementedError("map_indicator_state not available. Check discovery_mapping import.")
 
+    # Define minimal placeholders for constants needed by other core methods (e.g., categorizing)
+    BULLISH_PATTERNS = set()
+    BEARISH_PATTERNS = set()
+    NEUTRAL_PATTERNS = set()
+    CHART_BULLISH = set()
+    CHART_BEARISH = set()
+    CHART_NEUTRAL = set()
+    TIMEFRAME_GROUPS = {} # Must exist for StrategyDiscoverySystem to run
+    
+    MAPPER_AVAILABLE = False
+    # Do NOT exit(1) here. Let strategy_main.py handle the graceful exit.
+    print("FATAL WARNING: discovery_mapping.py failed to load. Strategy core will lack crucial constant definitions.")
 
 class StrategyDiscoverySystem:
     """
@@ -62,12 +75,6 @@ class StrategyDiscoverySystem:
         self.state_cache = {} 
         self.use_categorical_encoding = True
         self.n_jobs = mp.cpu_count() if n_jobs == -1 else n_jobs
-        
-        # Initialize new analysis systems
-        self.trend_analyzer = TrendAnalysisSystem()
-        self.pullback_analyzer = PullbackAnalysisSystem()
-        self.regime_detector = AdvancedRegimeDetectionSystem()
-        self.confluence_scorer = ConfluenceScoringSystem()
 
         # Cache attributes
         self.structure_cache = {}

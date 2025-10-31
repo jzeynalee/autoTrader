@@ -9,24 +9,6 @@ from functools import lru_cache
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
-try:
-    from discovery_mapping import (
-        map_indicator_state,
-        BULLISH_PATTERNS,
-        BEARISH_PATTERNS,
-        NEUTRAL_PATTERNS,
-        CHART_BULLISH,
-        CHART_BEARISH,
-        CHART_NEUTRAL,
-        TIMEFRAME_GROUPS,
-        TIMEFRAME_HIERARCHY,
-        validate_timeframe_group
-    )
-    MAPPER_AVAILABLE = True
-except ImportError:
-    print("Warning: discovery_mapping.py not found. System cannot function without it.")
-    MAPPER_AVAILABLE = False
-    exit(1)
 
 class PullbackAnalysisSystem:
         """
