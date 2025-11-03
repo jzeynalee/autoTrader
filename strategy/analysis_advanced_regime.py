@@ -138,7 +138,7 @@ class AdvancedRegimeDetectionSystem:
             recent_vol = returns.tail(10).std()
             previous_vol = returns.tail(20).head(10).std()
             
-            if abs(recent_vol - previous_vol) / previous_vol > 0.5:
+            if previous_vol > 0.0 and abs(recent_vol - previous_vol) / previous_vol > 0.5:
                 volatility_analysis['volatility_clustering'] = True
                 volatility_analysis['volatility_score'] += 1
         
