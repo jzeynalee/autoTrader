@@ -646,52 +646,5 @@ class AdvancedRegimeDetectionSystem:
             }
         }
     
-    def enhanced_market_regime_detection(self, df, volatility_window=20, trend_window=50):
-        """Vectorized market regime detection"""
-        df = df.copy()
-        
-        returns = df['close'].pct_change().values
-        vol_short = pd.Series(returns).rolling(volatility_window).std().values
-        vol_medium = pd.Series(returns).rolling(volatility_window * 2).std().values
-        
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
-        
-        plus_dm = np.diff(high, prepend=high[0])
-        minus_dm = -np.diff(low, prepend=low[0])
-        
-        tr = np.maximum(high - low, 
-                       np.maximum(np.abs(high - np.roll(close, 1)), 
-                                 np.abs(low - np.roll(close, 1))))
-        
-        atr = pd.Series(tr).rolling(trend_window).mean().values
-        plus_di = 100 * (pd.Series(plus_dm).rolling(trend_window).mean().values / atr)
-        minus_di = 100 * (pd.Series(minus_dm).rolling(trend_window).mean().values / atr)
-        
-        with np.errstate(divide='ignore', invalid='ignore'):
-            dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
-            dx = np.nan_to_num(dx)
-        
-        adx = pd.Series(dx).rolling(trend_window).mean().values
-        
-        volume_sma = df['volume'].rolling(trend_window).mean().values
-        volume_ratio = df['volume'].values / volume_sma
-        
-        vol_q6 = np.nanquantile(vol_short, 0.6)
-        vol_q4 = np.nanquantile(vol_short, 0.4)
-        vol_q8 = np.nanquantile(vol_short, 0.8)
-        vol_q2 = np.nanquantile(vol_short, 0.2)
-        
-        regime = np.full(len(df), 'normal', dtype=object)
-        regime[(adx > 25) & (vol_short > vol_q6)] = 'strong_trend'
-        regime[(adx < 20) & (vol_short < vol_q4)] = 'ranging'
-        regime[(vol_short > vol_q8) & (volume_ratio > 1.5)] = 'high_vol_breakout'
-        regime[(vol_short < vol_q2) & (volume_ratio < 0.8)] = 'low_vol_accumulation'
-        
-        df['market_regime'] = regime
-        df['regime_confidence'] = self._calculate_regime_confidence_vectorized(adx, vol_short, volume_ratio)
-        
-        return df
 
 

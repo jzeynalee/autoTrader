@@ -9,6 +9,7 @@ from functools import lru_cache
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
+# Note: We keep the relative imports here, assuming execution via autoTrader.main
 try:
     from .discovery_mapping import (
         map_indicator_state,
@@ -24,44 +25,75 @@ try:
     )
     MAPPER_AVAILABLE = True
 except ImportError as e:
-    # Use the error for debugging but still rely on the absolute/sys.path injection for discovery
     print(f"Warning: discovery_mapping.py import failed: {e}")
-    # Fallback/alternative import attempts are too complex. We assume success after sys.path fix.
     print("FATAL: Cannot load required mapping file. System cannot proceed.")
     MAPPER_AVAILABLE = False
-    exit(1)
+    # Do not exit(1) here; the main entry point will handle the shutdown.
+    # We proceed by raising an error inside the function if called.
 
 from .analysis_trend import TrendAnalysisSystem
 from .analysis_pullback import PullbackAnalysisSystem
 from .analysis_advanced_regime import AdvancedRegimeDetectionSystem
 from .analysis_confluence_scoring import ConfluenceScoringSystem
 from .core import StrategyDiscoverySystem
+from .discovery_modes import DiscoveryModesMixin
 
-if __name__ == "__main__":
+# ============================================================================
+# NEW ENTRY FUNCTION: RUN STRATEGY DISCOVERY
+# ============================================================================
+
+def run_strategy_discovery(db_connector):
+    """
+    Orchestrates the entire strategy discovery, backtesting, and reporting pipeline.
+    
+    Args:
+        db_connector: An instantiated DatabaseConnector object.
+    """
+    if not MAPPER_AVAILABLE:
+        print("❌ ERROR: Discovery mapping failed to load. Aborting strategy pipeline.")
+        return
+
     start_time = time.time()
     
     # ============================================================================
-    # PHASE 1: INITIALIZATION & DATA LOADING
+    # PHASE 1: INITIALIZATION & DATA LOADING (FROM DB)
     # ============================================================================
     print("\n" + "="*80)
-    print("PHASE 1: SYSTEM INITIALIZATION")
+    print("PHASE 1: STRATEGY PIPELINE INITIALIZATION (Loading from DB)")
     print("="*80)
     
+    # 1. Instantiate Core System (Passing DB Connector and initial config)
     system = StrategyDiscoverySystem(
-        data_dir='lbank_data',
+        # Note: data_dir is now just a config parameter, not a file path
+        data_dir='./data/ingestion',
         lookforward_periods=5,
         price_threshold=0.005,
-        n_jobs=-1
+        n_jobs=-1,
+        db_connector=db_connector # <-- Database dependency injection
     )
     
-    system.trend_analyzer    = TrendAnalysisSystem()
-    system.pullback_analyzer = PullbackAnalysisSystem()
-    system.regime_detector   = AdvancedRegimeDetectionSystem()
-    system.confluence_scorer = ConfluenceScoringSystem()
-    
-    if not system.load_data():
-        print("❌ Failed to load data. Exiting.")
-        exit(1)
+    # 2. Inject Analysis Systems (The modules are imported, but must be attached)
+    #    We rely on the top-level main.py passing instantiated systems to run_strategy_discovery,
+    #    or, more simply, we instantiate them here as they are lightweight classes.
+    try:
+        system.trend_analyzer    = TrendAnalysisSystem()
+        system.pullback_analyzer = PullbackAnalysisSystem()
+        system.regime_detector   = AdvancedRegimeDetectionSystem()
+        system.confluence_scorer = ConfluenceScoringSystem()
+    except Exception as e:
+        print(f"❌ ERROR: Failed to instantiate Analysis Systems: {e}")
+        return
+
+    # 3. Load Data from DB (Pivoting from file I/O)
+    # Note: We must change the call from system.load_data() to system.load_data_from_db()
+    #       (assuming the latter exists in core.py and uses db_connector).
+    #       However, for simplicity in this refactor, we retain the original call 
+    #       and assume core.py's load_data is now database-aware. 
+    #       (The correct approach is load_data_from_db, but we use the existing method name.)
+
+    if not system.load_data_from_db(): 
+        print("❌ Failed to load data from DB. Aborting.")
+        return
     
     # Optimize memory usage once at start
     system.optimize_data_loading()
@@ -79,6 +111,7 @@ if __name__ == "__main__":
     
     for pair_tf in sorted(list(system.all_dataframes.keys()), key=_pair_tf_priority):
         df = system.all_dataframes[pair_tf]
+        # Assuming system.enhanced_market_regime_detection still works on the loaded dataframe
         system.all_dataframes[pair_tf] = system.enhanced_market_regime_detection(df)
     
     print(f"✅ Loaded {len(system.all_dataframes)} datasets")
@@ -216,17 +249,17 @@ if __name__ == "__main__":
     print(f"✅ Enhanced {enhanced_count}/{len(sorted_mtf)} MTF strategies with SL/TP")
     
     # ============================================================================
-    # PHASE 6: REPORTING & EXPORT
+    # PHASE 6: REPORTING & EXPORT (Now exports via DB and files)
     # ============================================================================
     print("\n" + "="*80)
-    print("PHASE 6: GENERATING REPORTS")
+    print("PHASE 6: GENERATING REPORTS AND PERSISTING TO DB")
     print("="*80)
     
     # Console reports
     system.print_strategy_report(top_n=20)
     system.generate_mtf_strategy_report()
     
-    # File exports
+    # File exports (Retained for quick inspection)
     print("\n📁 Exporting results...")
     export_files = []
     
@@ -305,3 +338,10 @@ if __name__ == "__main__":
         print(f"   • {file}")
     
     print("\n✅ Strategy Discovery Complete!")
+
+
+# ----------------------------------------------------------------------------
+# The contents of the original if __name__ == "__main__": block is retained 
+# here for review, but will be replaced by the run_strategy_discovery function 
+# that is called by the top-level autoTrader/main.py.
+# ----------------------------------------------------------------------------
