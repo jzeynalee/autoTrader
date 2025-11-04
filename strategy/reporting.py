@@ -91,46 +91,63 @@ class ReportsMixin:
             print(f"  Performance Score: {strategy.get('performance_score', 0):.3f}")
             print(f"  Expectancy: {strategy.get('expectancy', 0):.3f}%")
 
-    def export_summary_csv(self, filename='strategy_summary.csv'):
-        """Export strategy summary to CSV"""
-        summary_data = []
-        
-        for key, strategy in self.strategy_pool.items():
-            if 'backtest_win_rate' in strategy:
-                summary_data.append({
-                    'strategy_id': key,
-                    'pair_timeframe': strategy['pair_tf'],
-                    'signal_type': strategy['signal_type'],
-                    'signal_name': strategy['signal_name'],
-                    'direction': strategy['direction'],
-                    'trade_direction': strategy['trade_direction'],
-                    'win_rate': strategy['backtest_win_rate'],
-                    'total_signals': strategy['backtest_total_signals'],
-                    'wins': strategy['backtest_wins'],
-                    'losses': strategy['backtest_losses'],
-                    'avg_return': strategy.get('avg_return', 0),
-                    'profit_factor': strategy['profit_factor'],
-                    'performance_score': strategy.get('performance_score', 0),
-                    'expectancy': strategy.get('expectancy', 0)
-                })
+    def export_summary_csv(self, filename="strategy_summary.csv"):
+        """
+        FIXED: Exports a summary of ALL strategies (both single and MTF)
+        to a CSV file.
+        """
+        rows = []
+        for strat_id, strategy in self.strategy_pool.items():
+            # Get performance, falling back from backtest to discovered
+            win_rate = strategy.get('backtest_win_rate', strategy.get('discovered_accuracy', 0))
+            if win_rate < 0.01: # Skip empty/failed strategies
+                continue
 
-        if not summary_data:
-            print("⚠️ No strategies with backtest results found. CSV not created.")
+            # --- START FIX ---
+            # Handle different strategy types
+            
+            strat_type = strategy.get('type', 'single_signal')
+            
+            if strat_type == 'single_signal':
+                signal = strategy.get('signal_name', 'N/A')
+            elif strat_type.startswith('mtf_'):
+                # Try to get a descriptive name, fallback to a generic one
+                signal = strategy.get('setup_name', 
+                         strategy.get('pattern_name', 
+                         strategy.get('strategy_name', strat_type)))
+            else:
+                signal = strategy.get('signal_name', 'combination')
+
+            pair_tf = strategy.get('pair_tf', 'N/A')
+            if pair_tf == 'N/A' and strat_type.startswith('mtf_'):
+                pair_tf = f"{strategy.get('group')}_{strategy.get('ltf_timeframe')}"
+            
+            # --- END FIX ---
+
+            row = {
+                'id': strat_id,
+                'type': strat_type,
+                'pair_tf': pair_tf,
+                'direction': strategy.get('direction', 'N/A'),
+                'signal': signal,
+                'win_rate': f"{win_rate:.2%}",
+                'total_trades': strategy.get('backtest_total_signals', strategy.get('sample_size', 0)),
+                'performance_score': strategy.get('performance_score', 0),
+            }
+            rows.append(row)
+        
+        if not rows:
+            print("No valid strategies to export to CSV.")
             return
 
-        df = pd.DataFrame(summary_data)
-
-        if 'performance_score' not in df.columns:
-            print("⚠️ 'performance_score' column missing. Adding default = 0.")
-            df['performance_score'] = 0
-
+        df = pd.DataFrame(rows)
+        df = df.sort_values(by='performance_score', ascending=False)
+        
         try:
-            df = df.sort_values('performance_score', ascending=False)
+            df.to_csv(filename, index=False)
+            print(f"✅ Exported summary to {filename}")
         except Exception as e:
-            print(f"⚠️ Sort skipped due to: {e}")
-
-        df.to_csv(filename, index=False)
-        print(f"✓ Summary exported to {filename} ({len(df)} strategies)")
+            print(f"⚠️ Failed to export summary CSV: {e}")
 
     def save_strategies_to_file(self, filename=None):
         """Save discovered strategies to JSON file"""

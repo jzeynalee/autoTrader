@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import pandas_ta as ta
 import os
 import time
 from collections import defaultdict
@@ -21,64 +22,83 @@ class AdvancedRegimeDetectionSystem:
     
     def detect_advanced_market_regimes(self, df):
         """
-        Comprehensive market regime detection with price action integration
-        Returns detailed regime classification and transition analysis
-        """
-        if len(df) < 50:
-            return self._create_default_regime_analysis()
+        Main function to add historical regime data to a DataFrame.
         
-        # Create a copy to avoid modifying original
+        This function calculates and appends:
+        - 'regime_volatility' (low, normal, high)
+        - 'regime_trend' (ranging, trending, strong_trend)
+        - 'historical_regime' (the synthesized final regime, e.g., 'ranging_low_vol')
+        
+        Returns:
+            pd.DataFrame: The original DataFrame with new regime columns added.
+        """
+        
+        # Use cache to avoid re-calculation on the same data
+        cache_key = f"{len(df)}_{df.index[-1]}"
+        if cache_key in self.regime_cache:
+            return self.regime_cache[cache_key]
+        
+        if len(df) < 50: # Need 50 bars for stable rolling metrics
+            df['historical_regime'] = 'unknown'
+            return df
+            
         df_analysis = df.copy()
         
-        regime_analysis = {
-            'primary_regime': 'unknown',
-            'regime_confidence': 0,
-            'regime_strength': 0,
-            'sub_regime': 'unknown',
-            'transition_phase': False,
-            'regime_duration_bars': 0,
-            'key_characteristics': {},
-            'regime_score_breakdown': {},
-            'adaptive_parameters': {}
-        }
+        # 1. Volatility Regime Analysis (Vectorized)
+        atr = ta.atr(df_analysis['high'], df_analysis['low'], df_analysis['close'], length=14)
+        atr_pct = (atr / df_analysis['close']) * 100
+        atr_pct_ma = atr_pct.rolling(window=50).mean()
+        atr_pct_std = atr_pct.rolling(window=50).std()
         
-        # 1. VOLATILITY REGIME ANALYSIS
-        volatility_analysis = self._analyze_volatility_regime(df_analysis)
-        regime_analysis.update(volatility_analysis)
+        df_analysis['regime_volatility'] = 'normal'
+        df_analysis.loc[atr_pct > (atr_pct_ma + atr_pct_std), 'regime_volatility'] = 'high'
+        df_analysis.loc[atr_pct < (atr_pct_ma - atr_pct_std), 'regime_volatility'] = 'low'
+
+        # 2. Trend Regime Analysis (Vectorized)
+        if 'adx' not in df_analysis.columns:
+            # Calculate ADX if missing (common in some data)
+            adx_data = ta.adx(df_analysis['high'], df_analysis['low'], df_analysis['close'], length=14)
+            df_analysis['adx'] = adx_data['ADX_14'] if 'ADX_14' in adx_data.columns else 20.0
+            df_analysis['adx'] = df_analysis['adx'].fillna(20) # Fill NaNs with neutral value
+
+        df_analysis['regime_trend'] = 'ranging'
+        df_analysis.loc[df_analysis['adx'] > 20, 'regime_trend'] = 'trending'
+        df_analysis.loc[df_analysis['adx'] > 30, 'regime_trend'] = 'strong_trend'
+
+        # 3. Synthesize Primary Regime (Vectorized)
+        # This creates the 'historical_regime' column required by Mode J and Confluence
         
-        # 2. TREND REGIME ANALYSIS  
-        trend_analysis = self._analyze_trend_regime(df_analysis)
-        regime_analysis.update(trend_analysis)
+        # Default to 'transition'
+        df_analysis['historical_regime'] = 'transition_normal_vol'
         
-        # 3. MARKET STRUCTURE ANALYSIS
-        structure_analysis = self._analyze_market_structure_regime(df_analysis)
-        regime_analysis.update(structure_analysis)
+        # Ranging regimes
+        df_analysis.loc[
+            (df_analysis['regime_trend'] == 'ranging') & (df_analysis['regime_volatility'] == 'low'),
+            'historical_regime'
+        ] = 'ranging_low_vol'
+        df_analysis.loc[
+            (df_analysis['regime_trend'] == 'ranging') & (df_analysis['regime_volatility'] == 'normal'),
+            'historical_regime'
+        ] = 'ranging_normal_vol'
+        df_analysis.loc[
+            (df_analysis['regime_trend'] == 'ranging') & (df_analysis['regime_volatility'] == 'high'),
+            'historical_regime'
+        ] = 'ranging_high_vol'
         
-        # 4. MOMENTUM REGIME ANALYSIS
-        momentum_analysis = self._analyze_momentum_regime(df_analysis)
-        regime_analysis.update(momentum_analysis)
+        # Trending regimes
+        df_analysis.loc[
+            (df_analysis['regime_trend'].isin(['trending', 'strong_trend'])) & (df_analysis['regime_volatility'] == 'normal'),
+            'historical_regime'
+        ] = 'strong_trend_normal_vol'
+        df_analysis.loc[
+            (df_analysis['regime_trend'].isin(['trending', 'strong_trend'])) & (df_analysis['regime_volatility'] == 'high'),
+            'historical_regime'
+        ] = 'strong_trend_high_vol'
+
+        # Cache the result
+        self.regime_cache[cache_key] = df_analysis
         
-        # 5. VOLUME REGIME ANALYSIS
-        volume_analysis = self._analyze_volume_regime(df_analysis)
-        regime_analysis.update(volume_analysis)
-        
-        # 6. SYNTHESIZE PRIMARY REGIME
-        primary_regime = self._synthesize_primary_regime(regime_analysis)
-        regime_analysis['primary_regime'] = primary_regime
-        
-        # 7. CALCULATE CONFIDENCE AND STRENGTH
-        confidence_metrics = self._calculate_regime_confidence(regime_analysis)
-        regime_analysis.update(confidence_metrics)
-        
-        # 8. DETECT TRANSITION PHASES
-        transition_analysis = self._detect_regime_transitions(df_analysis, regime_analysis)
-        regime_analysis.update(transition_analysis)
-        
-        # 9. GENERATE ADAPTIVE PARAMETERS
-        adaptive_params = self._generate_adaptive_parameters(regime_analysis)
-        regime_analysis['adaptive_parameters'] = adaptive_params
-        
-        return regime_analysis
+        return df_analysis
     
     def _analyze_volatility_regime(self, df):
         """Analyze volatility characteristics to determine regime"""

@@ -117,9 +117,9 @@ class AnalysisHelpersMixin:
     
     def _create_mtf_alignment_cache_key(self, htf_df, ttf_df, ltf_df):
         """Create cache key for MTF alignment analysis"""
-        htf_key = f"{len(htf_df)}_{htf_df.index[-1]}_{htf_df['close'].iloc[-10]:.2f}"
-        ttf_key = f"{len(ttf_df)}_{ttf_df.index[-1]}_{ttf_df['close'].iloc[-10]:.2f}"
-        ltf_key = f"{len(ltf_df)}_{ltf_df.index[-1]}_{ltf_df['close'].iloc[-10]:.2f}"
+        htf_key = f"{len(htf_df)}_{htf_df.index.iloc[-1]}_{htf_df['close'].iloc[-10]:.2f}"
+        ttf_key = f"{len(ttf_df)}_{ttf_df.index.iloc[-1]}_{ttf_df['close'].iloc[-10]:.2f}"
+        ltf_key = f"{len(ltf_df)}_{ltf_df.index.iloc[-1]}_{ltf_df['close'].iloc[-10]:.2f}"
         return f"mtf_align_{hash(htf_key + ttf_key + ltf_key) & 0xFFFFFFFF}"
 
     def analyze_mtf_structure_alignment(self, htf_df, ttf_df, ltf_df):
@@ -489,7 +489,7 @@ class AnalysisHelpersMixin:
         # --- End Fix ---
 
         # Calculate price difference percentage
-        swing_price = nearest_swing['high'] if 'high' in nearest_swing.index else nearest_swing['low']
+        swing_price = nearest_swing['high'] if 'high' in swing_df.columns else nearest_swing['low']
         price_diff_pct = (swing_price - target_price) / target_price if target_price != 0 else 0
         
         return {
@@ -878,209 +878,96 @@ class AnalysisHelpersMixin:
         
         return divergence
     
-    # This was the method missing from Mode F/G
     def detect_advanced_price_patterns(self, df):
         """
         Updated to use optimized pattern detection
         """
-        # This function is now defined in PatternsMixin, but we add it here
-        # to ensure it's available, as it was in the original file.
-        # A better long-term fix is to ensure core.py inherits from PatternsMixin
-        # and calls self.optimized_detect_advanced_price_patterns
-        if hasattr(self, 'optimized_detect_advanced_price_patterns'):
-             return self.optimized_detect_advanced_price_patterns(df)
-        else:
-             print("⚠️ 'optimized_detect_advanced_price_patterns' not found, returning base df.")
-             return df
+        return self.optimized_detect_advanced_price_patterns(df)
 
-    # This was the method missing from Mode M
-    def _analyze_volatility_characteristics(self, df):
+    def _calculate_basic_swing_points(self, df, lookback=5):
         """
-        Analyze volatility characteristics for a dataframe
+        Updated to use vectorized swing analysis
         """
-        if len(df) < 20:
-            return {'volatility_regime': 'unknown', 'volatility_score': 0}
+        df = df.copy()
+        swing_analysis = self.vectorized_swing_analysis(df, lookback)
         
-        volatility_analysis = {
-            'volatility_regime': 'normal_volatility',
-            'volatility_score': 0,
-            'atr_percentage': 0,
-            'bb_width': 0,
-            'volatility_trend': 'stable'
-        }
+        df['swing_high'] = swing_analysis['swing_high']
+        df['swing_low'] = swing_analysis['swing_low']
         
-        # ATR-based volatility analysis
-        if 'atr' in df.columns:
-            current_atr = df['atr'].iloc[-1]
-            current_price = df['close'].iloc[-1]
-            if current_price == 0: return volatility_analysis # Avoid zero division
-            
-            atr_percentage = (current_atr / current_price) * 100
-            volatility_analysis['atr_percentage'] = atr_percentage
-            
-            # Historical ATR context
-            historical_atr = df['atr'].tail(50).median()
-            historical_atr_pct = (historical_atr / current_price) * 100
-            
-            if historical_atr_pct > 0:
-                if atr_percentage > historical_atr_pct * 1.3:
-                    volatility_analysis['volatility_regime'] = 'high_volatility'
-                    volatility_analysis['volatility_score'] += 2
-                elif atr_percentage < historical_atr_pct * 0.7:
-                    volatility_analysis['volatility_regime'] = 'low_volatility'
-                    volatility_analysis['volatility_score'] += 0
-                else:
-                    volatility_analysis['volatility_regime'] = 'normal_volatility'
-                    volatility_analysis['volatility_score'] += 1
-        
-        # Bollinger Band width analysis
-        if 'bb_width' in df.columns:
-            current_bb_width = df['bb_width'].iloc[-1]
-            historical_bb_width = df['bb_width'].tail(50).median()
-            volatility_analysis['bb_width'] = current_bb_width
-            
-            if historical_bb_width > 0:
-                if current_bb_width > historical_bb_width * 1.4:
-                    volatility_analysis['volatility_score'] += 2
-                elif current_bb_width < historical_bb_width * 0.6:
-                    volatility_analysis['volatility_score'] += 0
-                else:
-                    volatility_analysis['volatility_score'] += 1
-        
-        # Volatility trend
-        if len(df) >= 30 and 'atr' in df.columns:
-            recent_volatility = df['atr'].tail(10).mean()
-            previous_volatility = df['atr'].tail(30).head(20).mean()
-            
-            if previous_volatility > 0:
-                if recent_volatility > previous_volatility * 1.2:
-                    volatility_analysis['volatility_trend'] = 'increasing'
-                elif recent_volatility < previous_volatility * 0.8:
-                    volatility_analysis['volatility_trend'] = 'decreasing'
-        
-        return volatility_analysis
+        return df
 
-    # This was the method missing from Mode N
-    def _analyze_momentum_cascade(self, htf_df, ttf_df, ltf_df):
-        """
-        Analyze momentum cascade across timeframes
-        """
-        cascade_analysis = {
-            'primary_flow_direction': 'mixed',
-            'momentum_strength': 'weak',
-            'cascade_score': 0,
-            'timeframe_momentum': {},
-            'alignment_score': 0
-        }
+    def get_regime_adaptation(self, strategy_config, regime_context):
+        """Safely get regime adaptations with fallback for unknown regimes, Added while unit testing."""
+        adaptations = strategy_config.get('regime_adaptations', {})
         
-        # Analyze momentum for each timeframe
-        htf_momentum = self._analyze_timeframe_momentum(htf_df)
-        ttf_momentum = self._analyze_timeframe_momentum(ttf_df)
-        ltf_momentum = self._analyze_timeframe_momentum(ltf_df)
-        
-        cascade_analysis['timeframe_momentum'] = {
-            'htf': htf_momentum['primary_direction'],
-            'ttf': ttf_momentum['primary_direction'],
-            'ltf': ltf_momentum['primary_direction']
-        }
-        
-        # Determine flow direction
-        momentum_strengths = {
-            'htf': htf_momentum['strength_score'],
-            'ttf': ttf_momentum['strength_score'],
-            'ltf': ltf_momentum['strength_score']
-        }
-        
-        # Check for cascading momentum (HTF → TTF → LTF)
-        if (htf_momentum['primary_direction'] == ttf_momentum['primary_direction'] == 
-            ltf_momentum['primary_direction']):
-            cascade_analysis['primary_flow_direction'] = 'htf_to_ltf'
-            cascade_analysis['cascade_score'] = min(v for v in momentum_strengths.values() if v > 0) if any(v > 0 for v in momentum_strengths.values()) else 0
-            cascade_analysis['alignment_score'] = 100
-        # Check for reversal cascading (LTF → TTF → HTF)
-        elif (ltf_momentum['primary_direction'] == ttf_momentum['primary_direction'] and
-            ltf_momentum['strength_score'] > htf_momentum['strength_score']):
-            cascade_analysis['primary_flow_direction'] = 'ltf_to_htf'
-            cascade_analysis['cascade_score'] = ltf_momentum['strength_score']
-            cascade_analysis['alignment_score'] = 80
+        # Return adaptation for known regime, or fallback to 'normal' regime
+        if regime_context in adaptations:
+            return adaptations[regime_context]
+        elif 'normal' in adaptations:
+            return adaptations['normal']
+        elif adaptations:  # Return first available adaptation
+            return next(iter(adaptations.values()))
         else:
-            cascade_analysis['primary_flow_direction'] = 'mixed'
-            cascade_analysis['cascade_score'] = 0
-            cascade_analysis['alignment_score'] = 50
+            # Return default adaptation
+            return {
+                'parameter_modifier': 1.0,
+                'additional_signals': []
+            }
         
-        # Determine overall momentum strength
-        avg_strength = sum(momentum_strengths.values()) / 3
-        if avg_strength >= 80:
-            cascade_analysis['momentum_strength'] = 'strong'
-        elif avg_strength >= 60:
-            cascade_analysis['momentum_strength'] = 'moderate'
-        elif avg_strength >= 40:
-            cascade_analysis['momentum_strength'] = 'weak'
-        else:
-            cascade_analysis['momentum_strength'] = 'reversing'
+    def _create_signal_mask(self, htf_df, ttf_df, ltf_df, signals_config, direction):
+        """Create signal mask for given configuration"""
+        signal_mask = pd.Series(True, index=ltf_df.index)
         
-        return cascade_analysis
+        for tf, signals in signals_config.items():
+            df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+            
+            for signal in signals:
+                if signal in df.columns:
+                    states = self.get_or_compute_states(df, signal)
+                    if states is not None:
+                        if direction == 'bullish':
+                            signal_mask &= (states == 'bullish')
+                        else:
+                            signal_mask &= (states == 'bearish')
+        
+        return signal_mask
 
-    # This was the helper for Mode N
-    def _analyze_timeframe_momentum(self, df):
-        """
-        Analyze momentum for a single timeframe
-        """
-        momentum_analysis = {
-            'primary_direction': 'neutral',
-            'strength_score': 0,
-            'momentum_indicators': []
-        }
+    def identify_sideways_conditions(self, df, atr_period=14, atr_threshold=0.5):
+        """Vectorized sideways market detection"""
+        if not isinstance(df, pd.DataFrame):
+             print(f"⚠️ identify_sideways_conditions expected DataFrame, got {type(df)}")
+             return pd.Series([False] * len(df), index=df.index)
+             
+        high = df['high'].values
+        low = df['low'].values
+        close = df['close'].values
         
-        if len(df) < 20:
-            return momentum_analysis
+        high_low = high - low
+        high_close = np.abs(high - np.roll(close, 1))
+        low_close = np.abs(low - np.roll(close, 1))
         
-        # Analyze key momentum indicators
-        momentum_signals = []
+        true_range = np.maximum(high_low, np.maximum(high_close, low_close))
+        atr = pd.Series(true_range).rolling(window=atr_period).mean().values
         
-        # RSI momentum
-        if 'rsi' in df.columns:
-            current_rsi = df['rsi'].iloc[-1]
-            if current_rsi > 60:
-                momentum_signals.append(('rsi', 'bullish', abs(current_rsi - 50)))
-            elif current_rsi < 40:
-                momentum_signals.append(('rsi', 'bearish', abs(current_rsi - 50)))
+        # Avoid division by zero if close is 0
+        with np.errstate(divide='ignore', invalid='ignore'):
+            atr_pct = (atr / close) * 100
+            atr_pct[~np.isfinite(atr_pct)] = 0 # Handle NaNs/Infs
+            
+        low_vol = atr_pct < atr_threshold
         
-        # MACD momentum
-        if 'macd' in df.columns and 'macd_signal' in df.columns:
-            current_macd = df['macd'].iloc[-1]
-            current_signal = df['macd_signal'].iloc[-1]
-            if current_macd > current_signal:
-                momentum_signals.append(('macd', 'bullish', abs(current_macd - current_signal)))
-            else:
-                momentum_signals.append(('macd', 'bearish', abs(current_macd - current_signal)))
+        rolling_high = pd.Series(high).rolling(window=20).max().values
+        rolling_low = pd.Series(low).rolling(window=20).min().values
         
-        # Price structure momentum
-        if 'higher_highs_lower_lows' in df.columns:
-            current_structure = df['higher_highs_lower_lows'].iloc[-1]
-            if current_structure == 1:
-                momentum_signals.append(('structure', 'bullish', 25))
-            elif current_structure == -1:
-                momentum_signals.append(('structure', 'bearish', 25))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            range_pct = ((rolling_high - rolling_low) / rolling_low) * 100
+            range_pct[~np.isfinite(range_pct)] = 0 # Handle NaNs/Infs
+
+        tight_range = range_pct < (self.price_threshold * 2)
         
-        # Aggregate momentum direction
-        bullish_strength = sum(score for _, direction, score in momentum_signals if direction == 'bullish')
-        bearish_strength = sum(score for _, direction, score in momentum_signals if direction == 'bearish')
-        
-        if bullish_strength > bearish_strength:
-            momentum_analysis['primary_direction'] = 'bullish'
-            momentum_analysis['strength_score'] = bullish_strength
-        elif bearish_strength > bullish_strength:
-            momentum_analysis['primary_direction'] = 'bearish'
-            momentum_analysis['strength_score'] = bearish_strength
-        else:
-            momentum_analysis['primary_direction'] = 'neutral'
-            momentum_analysis['strength_score'] = 0
-        
-        momentum_analysis['momentum_indicators'] = momentum_signals
-        
-        return momentum_analysis
-    
+        sideways = low_vol | tight_range
+        return pd.Series(sideways, index=df.index)
+
     def calculate_mtf_sl_tp(self, strategy):
         """Calculate SL/TP for MTF strategy using hierarchical approach"""
         
@@ -1161,5 +1048,229 @@ class AnalysisHelpersMixin:
             return strategy
             
         except Exception as e:
-            print(f"⚠️ Error calculating SL/TP for {strategy.get('id', 'N/A')}: {e}")
+            print(f"⚠️ Error calculating SL/TP for {strategy.get('id')}: {e}")
             return strategy
+        
+    def _analyze_volatility_characteristics(self, df):
+        """
+        Analyze volatility characteristics for a dataframe
+        """
+        if len(df) < 20:
+            return {'volatility_regime': 'unknown', 'volatility_score': 0}
+        
+        volatility_analysis = {
+            'volatility_regime': 'normal_volatility',
+            'volatility_score': 0,
+            'atr_percentage': 0,
+            'bb_width': 0,
+            'volatility_trend': 'stable'
+        }
+        
+        # ATR-based volatility analysis
+        if 'atr' in df.columns:
+            current_atr = df['atr'].iloc[-1]
+            current_price = df['close'].iloc[-1]
+            atr_percentage = (current_atr / current_price) * 100
+            volatility_analysis['atr_percentage'] = atr_percentage
+            
+            # Historical ATR context
+            historical_atr = df['atr'].tail(50).median()
+            historical_atr_pct = (historical_atr / current_price) * 100
+            
+            if atr_percentage > historical_atr_pct * 1.3:
+                volatility_analysis['volatility_regime'] = 'high_volatility'
+                volatility_analysis['volatility_score'] += 2
+            elif atr_percentage < historical_atr_pct * 0.7:
+                volatility_analysis['volatility_regime'] = 'low_volatility'
+                volatility_analysis['volatility_score'] += 0
+            else:
+                volatility_analysis['volatility_regime'] = 'normal_volatility'
+                volatility_analysis['volatility_score'] += 1
+        
+        # Bollinger Band width analysis
+        if 'bb_width' in df.columns:
+            current_bb_width = df['bb_width'].iloc[-1]
+            historical_bb_width = df['bb_width'].tail(50).median()
+            volatility_analysis['bb_width'] = current_bb_width
+            
+            if current_bb_width > historical_bb_width * 1.4:
+                volatility_analysis['volatility_score'] += 2
+            elif current_bb_width < historical_bb_width * 0.6:
+                volatility_analysis['volatility_score'] += 0
+            else:
+                volatility_analysis['volatility_score'] += 1
+        
+        # Volatility trend
+        if len(df) >= 30:
+            recent_volatility = df['atr'].tail(10).mean() if 'atr' in df.columns else 0
+            previous_volatility = df['atr'].tail(30).head(20).mean() if 'atr' in df.columns else 0
+            
+            if recent_volatility > previous_volatility * 1.2:
+                volatility_analysis['volatility_trend'] = 'increasing'
+            elif recent_volatility < previous_volatility * 0.8:
+                volatility_analysis['volatility_trend'] = 'decreasing'
+        
+        return volatility_analysis
+
+    def _analyze_momentum_cascade(self, htf_df, ttf_df, ltf_df):
+        """
+        Analyze momentum cascade across timeframes
+        """
+        cascade_analysis = {
+            'primary_flow_direction': 'mixed',
+            'momentum_strength': 'weak',
+            'cascade_score': 0,
+            'timeframe_momentum': {},
+            'alignment_score': 0
+        }
+        
+        # Analyze momentum for each timeframe
+        htf_momentum = self._analyze_timeframe_momentum(htf_df)
+        ttf_momentum = self._analyze_timeframe_momentum(ttf_df)
+        ltf_momentum = self._analyze_timeframe_momentum(ltf_df)
+        
+        cascade_analysis['timeframe_momentum'] = {
+            'htf': htf_momentum['primary_direction'],
+            'ttf': ttf_momentum['primary_direction'],
+            'ltf': ltf_momentum['primary_direction']
+        }
+        
+        # Determine flow direction
+        momentum_strengths = {
+            'htf': htf_momentum['strength_score'],
+            'ttf': ttf_momentum['strength_score'],
+            'ltf': ltf_momentum['strength_score']
+        }
+        
+        # Check for cascading momentum (HTF → TTF → LTF)
+        if (htf_momentum['primary_direction'] == ttf_momentum['primary_direction'] == 
+            ltf_momentum['primary_direction']):
+            cascade_analysis['primary_flow_direction'] = 'htf_to_ltf'
+            cascade_analysis['cascade_score'] = min(momentum_strengths.values())
+            cascade_analysis['alignment_score'] = 100
+        # Check for reversal cascading (LTF → TTF → HTF)
+        elif (ltf_momentum['primary_direction'] == ttf_momentum['primary_direction'] and
+            ltf_momentum['strength_score'] > htf_momentum['strength_score']):
+            cascade_analysis['primary_flow_direction'] = 'ltf_to_htf'
+            cascade_analysis['cascade_score'] = ltf_momentum['strength_score']
+            cascade_analysis['alignment_score'] = 80
+        else:
+            cascade_analysis['primary_flow_direction'] = 'mixed'
+            cascade_analysis['cascade_score'] = 0
+            cascade_analysis['alignment_score'] = 50
+        
+        # Determine overall momentum strength
+        avg_strength = sum(momentum_strengths.values()) / 3
+        if avg_strength >= 80:
+            cascade_analysis['momentum_strength'] = 'strong'
+        elif avg_strength >= 60:
+            cascade_analysis['momentum_strength'] = 'moderate'
+        elif avg_strength >= 40:
+            cascade_analysis['momentum_strength'] = 'weak'
+        else:
+            cascade_analysis['momentum_strength'] = 'reversing'
+        
+        return cascade_analysis
+    
+    def _analyze_timeframe_momentum(self, df):
+        """Helper for Mode N: Analyzes momentum for a single timeframe."""
+        if 'rsi' not in df.columns or 'macd' not in df.columns:
+            return 0 # Neutral
+        
+        # Get last bar data
+        rsi_val = df['rsi'].iloc[-1]
+        macd_val = df['macd'].iloc[-1]
+        macd_signal_val = df['macd_signal'].iloc[-1]
+
+        score = 0
+        if rsi_val > 55 and macd_val > macd_signal_val:
+            score = 1 # Bullish
+        elif rsi_val < 45 and macd_val < macd_signal_val:
+            score = -1 # Bearish
+            
+        return score
+
+    def _analyze_momentum_cascade(self, htf_df, ttf_df, ltf_df):
+        """Helper for Mode N: Analyzes momentum flow across timeframes."""
+        htf_mom = self._analyze_timeframe_momentum(htf_df)
+        ttf_mom = self._analyze_timeframe_momentum(ttf_df)
+        ltf_mom = self._analyze_timeframe_momentum(ltf_df)
+        
+        momentum_flows = {
+            'htf_momentum': 'bullish' if htf_mom > 0 else 'bearish' if htf_mom < 0 else 'neutral',
+            'ttf_momentum': 'bullish' if ttf_mom > 0 else 'bearish' if ttf_mom < 0 else 'neutral',
+            'ltf_momentum': 'bullish' if ltf_mom > 0 else 'bearish' if ltf_mom < 0 else 'neutral',
+        }
+        
+        if htf_mom == ttf_mom == ltf_mom:
+            momentum_flows['primary_flow_direction'] = 'htf_to_ltf'
+            momentum_flows['momentum_strength'] = 'strong' if htf_mom != 0 else 'neutral'
+            momentum_flows['cascade_score'] = 100
+        elif ltf_mom != 0 and ttf_mom == ltf_mom:
+            momentum_flows['primary_flow_direction'] = 'ltf_to_htf' # Reversal
+            momentum_flows['momentum_strength'] = 'reversing'
+            momentum_flows['cascade_score'] = 50
+        else:
+            momentum_flows['primary_flow_direction'] = 'mixed'
+            momentum_flows['momentum_strength'] = 'conflicting'
+            momentum_flows['cascade_score'] = 0
+            
+        return momentum_flows
+    
+    def _identify_regime_contexts(self, htf_df, ttf_df, ltf_df):
+        """
+        Helper for Mode K.
+        FIXED to read the 'historical_regime' column from the DataFrames,
+        not a dict.
+        """
+        try:
+            # Get the regime from the *last bar* of the LTF dataframe
+            ltf_regime_val = ltf_df['historical_regime'].iloc[-1]
+        except (KeyError, IndexError):
+            return ['unknown'] # Fallback
+
+        # Simple logic: use the LTF regime as the primary context
+        if 'trending' in str(ltf_regime_val):
+            return ['trending']
+        if 'ranging' in str(ltf_regime_val):
+            return ['ranging']
+        if 'transition' in str(ltf_regime_val):
+            return ['transition']
+        
+        return ['unknown']
+
+    def get_regime_adaptation(self, strategy_config, regime_context):
+        """
+        Helper for Mode K.
+        Safely gets the adaptation for the current regime.
+        """
+        if regime_context in strategy_config['regime_adaptations']:
+            return strategy_config['regime_adaptations'][regime_context]
+        
+        # Fallback to the first available adaptation (e.g., 'trending')
+        first_key = list(strategy_config['regime_adaptations'].keys())[0]
+        return strategy_config['regime_adaptations'][first_key]
+
+    def _build_adaptive_signal_set(self, strategy_config, regime_context, htf_df, ttf_df, ltf_df):
+        """Helper for Mode K: Builds the signal set."""
+        adaptation = self.get_regime_adaptation(strategy_config, regime_context)
+        
+        return {
+            'htf': strategy_config['core_signals']['htf'] + adaptation.get('additional_signals', []),
+            'ttf': strategy_config['core_signals']['ttf'],
+            'ltf': strategy_config['core_signals']['ltf'],
+        }
+
+    def _create_adaptive_signal_mask(self, adaptive_signals, htf_df, ttf_df, ltf_df, direction):
+        """Helper for Mode K: Creates the signal mask."""
+        active_mask = pd.Series(True, index=ltf_df.index)
+        direction_str = 'bullish' if direction == 'bullish' else 'bearish'
+
+        for tf, signals in adaptive_signals.items():
+            df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+            for sig in signals:
+                if sig in df.columns:
+                    states = self.get_or_compute_states(df, sig)
+                    if states is not None:
+                        active_mask &= (states == direction_str)
+        return active_mask

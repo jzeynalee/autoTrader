@@ -551,3 +551,66 @@ class PatternsMixin:
                 cleared_count += 1
         
         print(f"Cleared {cleared_count} old cache entries")
+    
+    # patterns.py (inside PatternsMixin class)
+
+    def analyze_mtf_structure_alignment(self, htf_df, ttf_df, ltf_df):
+        """
+        Analyzes the structural alignment of trends across three timeframes.
+        This is a helper function for Mode L.
+        """
+        # Use caching
+        cache_key = f"alignment_{len(htf_df)}_{htf_df.index[-1]}_{len(ltf_df)}_{ltf_df.index[-1]}"
+        if cache_key in self.alignment_cache:
+            self.performance_stats['cache_hits'] += 1
+            return self.alignment_cache[cache_key]
+            
+        self.performance_stats['cache_misses'] += 1
+        
+        def get_trend_direction(df):
+            # Use 'trend_structure' if available, else simple MA
+            if 'trend_structure' in df.columns:
+                # Use .iloc[-1] on the *Series* (df['col']), not the DataFrame (df)
+                last_trend = df['trend_structure'].iloc[-1]
+                if last_trend in ['strong_uptrend', 'uptrend']: return 1
+                if last_trend in ['strong_downtrend', 'downtrend']: return -1
+                return 0
+            elif 'ema_50' in df.columns:
+                # Fallback to simple MA cross
+                if df['close'].iloc[-1] > df['ema_50'].iloc[-1]: return 1
+                if df['close'].iloc[-1] < df['ema_50'].iloc[-1]: return -1
+                return 0
+            return 0
+
+        # Get the trend direction for the *last available bar*
+        htf_trend = get_trend_direction(htf_df)
+        ttf_trend = get_trend_direction(ttf_df)
+        ltf_trend = get_trend_direction(ltf_df)
+
+        trends = [htf_trend, ttf_trend, ltf_trend]
+        
+        # Calculate alignment score
+        alignment_score = 0
+        if htf_trend == ttf_trend == ltf_trend and htf_trend != 0:
+            alignment_score = 1.0  # Perfect alignment
+            quality = 'excellent'
+        elif (htf_trend == ttf_trend and htf_trend != 0) or (htf_trend == ltf_trend and htf_trend != 0):
+            alignment_score = 0.6  # HTF aligns with one other
+            quality = 'good'
+        elif ttf_trend == ltf_trend and ttf_trend != 0:
+            alignment_score = 0.3  # Lower TFs align, HTF conflicts
+            quality = 'poor'
+        else:
+            alignment_score = 0.0 # No alignment
+            quality = 'conflicting'
+            
+        result = {
+            'htf_trend': htf_trend,
+            'ttf_trend': ttf_trend,
+            'ltf_trend': ltf_trend,
+            'alignment_quality': quality,
+            'overall_alignment_score': alignment_score
+        }
+        
+        self.alignment_cache[cache_key] = result
+        return result

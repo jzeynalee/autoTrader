@@ -297,7 +297,22 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             if col_states is None:
                 return None
             
-            col_states = self.debounce_signal_states(col_states, k=2, method='consecutive')
+            # --- START OF THE FIX ---
+            
+            # BUG WAS HERE: The debounce line was here, filtering out 
+            # all single-bar patterns before they could be checked.
+            # col_states = self.debounce_signal_states(col_states, k=2, method='consecutive') 
+            
+            if col in categories['candlestick_patterns']:
+                signal_type = 'candlestick'
+            elif col in categories['chart_patterns']:
+                signal_type = 'chart_pattern'
+            else:
+                # FIX: Only apply debounce to indicators, not discrete patterns.
+                col_states = self.debounce_signal_states(col_states, k=2, method='consecutive')
+                signal_type = 'indicator'
+
+            # --- END OF THE FIX ---
             
             analysis_df = pd.DataFrame({
                 'signal_state': col_states.values,
@@ -322,12 +337,13 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             
             # Bullish analysis
             bullish_mask = analysis_df['signal_state'] == 'bullish'
-            if bullish_mask.sum() > 20:
+            if bullish_mask.sum() > 20: # Min sample size
                 bullish_correct = ((analysis_df['signal_state'] == 'bullish') & 
                                  (analysis_df['price_state'] == 'bullish')).sum()
                 bullish_accuracy = bullish_correct / bullish_mask.sum()
                 
-                if bullish_accuracy > 0.55:
+                # Use the 0.51 threshold
+                if bullish_accuracy > 0.51:
                     results.append({
                         'pair_tf': pair_tf,
                         'signal_type': signal_type,
@@ -341,12 +357,13 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             
             # Bearish analysis
             bearish_mask = analysis_df['signal_state'] == 'bearish'
-            if bearish_mask.sum() > 20:
+            if bearish_mask.sum() > 20: # Min sample size
                 bearish_correct = ((analysis_df['signal_state'] == 'bearish') & 
                                  (analysis_df['price_state'] == 'bearish')).sum()
                 bearish_accuracy = bearish_correct / bearish_mask.sum()
                 
-                if bearish_accuracy > 0.55:
+                # Use the 0.51 threshold
+                if bearish_accuracy > 0.51:
                     results.append({
                         'pair_tf': pair_tf,
                         'signal_type': signal_type,

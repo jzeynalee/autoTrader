@@ -10,8 +10,16 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
 class BacktestingMixin:
+    
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SECTION 1: MTF Backtesting Functions (MODES A, B, C)
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    
     def backtest_mtf_strategy(self, strategy):
-        """Enhanced backtesting for MTF strategies"""
+        """
+        Enhanced backtesting for legacy MTF strategies (Modes A, B, C)
+        FIXED: Now correctly calculates avg_win, avg_loss, and profit_factor.
+        """
         if not strategy['type'].startswith('mtf_'):
             return strategy
         
@@ -33,6 +41,8 @@ class BacktestingMixin:
         
         if any(states is None for states in [htf_states, ttf_states, ltf_states]):
             return strategy
+        
+        active_mask = pd.Series(False, index=ltf_df.index) # Default empty mask
         
         # Apply the specific MTF mode logic
         if strategy['type'] == 'mtf_mode_a':
@@ -97,12 +107,22 @@ class BacktestingMixin:
         
         if strategy['direction'] == 'bullish':
             wins = (active_returns > 0).sum()
+            winning_returns = active_returns[active_returns > 0]
+            losing_returns = active_returns[active_returns <= 0]
         else:
             wins = (active_returns < 0).sum()
+            winning_returns = active_returns[active_returns < 0]
+            losing_returns = active_returns[active_returns >= 0]
         
         total_signals = len(active_returns)
         win_rate = wins / total_signals if total_signals > 0 else 0
         avg_return = active_returns.mean()
+        
+        # --- START OF METRICS FIX ---
+        avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
+        avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
+        profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
+        # --- END OF METRICS FIX ---
         
         strategy.update({
             'backtest_win_rate': win_rate,
@@ -110,14 +130,23 @@ class BacktestingMixin:
             'backtest_wins': int(wins),
             'backtest_losses': int(total_signals - wins),
             'avg_return': avg_return,
+            'avg_win': avg_win,         # ADDED
+            'avg_loss': avg_loss,       # ADDED
+            'profit_factor': profit_factor, # ADDED
             'performance_score': win_rate
         })
         
         return strategy
 
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SECTION 2: MTF Backtesting Functions (MODES F, G)
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     def backtest_mtf_strategy_enhanced(self, strategy):
-        """Enhanced backtesting with advanced price action strategy support"""
+        """
+        Enhanced backtesting with advanced price action strategy support (Modes F, G)
+        FIXED: Now correctly calculates avg_win, avg_loss, and profit_factor.
+        """
         if not strategy['type'].startswith('mtf_'):
             return strategy
         
@@ -134,14 +163,15 @@ class BacktestingMixin:
         
         # Enhance dataframes with advanced patterns for modes F and G
         if strategy['type'] in ['mtf_mode_f', 'mtf_mode_g']:
-            htf_df = self.detect_advanced_price_patterns(htf_df)
-            ttf_df = self.detect_advanced_price_patterns(ttf_df)
-            ltf_df = self.detect_advanced_price_patterns(ltf_df)
+            htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+            ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+            ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
+        
+        active_mask = pd.Series(True, index=ltf_df.index) # Default mask
         
         # Apply the specific MTF mode logic
         if strategy['type'] == 'mtf_mode_f':
             # Advanced Structure Breakout mode
-            active_mask = pd.Series(True, index=ltf_df.index)
             
             # Check all advanced signals in the setup
             for tf_signals in [strategy.get('htf_signals', []), 
@@ -161,7 +191,6 @@ class BacktestingMixin:
         
         elif strategy['type'] == 'mtf_mode_g':
             # Momentum Divergence mode
-            active_mask = pd.Series(True, index=ltf_df.index)
             
             # Check momentum and divergence signals
             for tf_signals in [strategy.get('htf_signals', []), 
@@ -198,12 +227,22 @@ class BacktestingMixin:
         
         if strategy['direction'] == 'bullish':
             wins = (active_returns > 0).sum()
+            winning_returns = active_returns[active_returns > 0]
+            losing_returns = active_returns[active_returns <= 0]
         else:
             wins = (active_returns < 0).sum()
+            winning_returns = active_returns[active_returns < 0]
+            losing_returns = active_returns[active_returns >= 0]
         
         total_signals = len(active_returns)
         win_rate = wins / total_signals if total_signals > 0 else 0
         avg_return = active_returns.mean()
+
+        # --- START OF METRICS FIX ---
+        avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
+        avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
+        profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
+        # --- END OF METRICS FIX ---
         
         strategy.update({
             'backtest_win_rate': win_rate,
@@ -211,15 +250,23 @@ class BacktestingMixin:
             'backtest_wins': int(wins),
             'backtest_losses': int(total_signals - wins),
             'avg_return': avg_return,
+            'avg_win': avg_win,         # ADDED
+            'avg_loss': avg_loss,       # ADDED
+            'profit_factor': profit_factor, # ADDED
             'performance_score': win_rate
         })
         
         return strategy
 
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SECTION 3: MTF Backtesting Functions (MODES D, E, H, I, J, K, L, M, N)
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    
     def backtest_mtf_strategy_generic(self, strategy):
         """
         A generic backtester for all modern MTF strategies that use the
         'htf_signals', 'ttf_signals', and 'ltf_signals' dictionary structure.
+        FIXED: Now correctly calculates avg_win, avg_loss, and profit_factor.
         """
         try:
             # Get the aligned dataframes with advanced patterns
@@ -235,7 +282,6 @@ class BacktestingMixin:
                 return strategy
 
             # Ensure dataframes have all advanced patterns, as discovery did
-            # Use optimized_detect_advanced_price_patterns (which caches)
             htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
             ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
             ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
@@ -245,7 +291,6 @@ class BacktestingMixin:
             direction = strategy['direction']
             
             # Get all signal sources from the strategy
-            # Handles 'price_action_signals' (Mode E), 'confirmation_signals' (Mode I), etc.
             signal_groups = [
                 strategy.get('signals'),
                 strategy.get('price_action_signals'),
@@ -271,10 +316,11 @@ class BacktestingMixin:
             
             # Apply the mask
             for tf_key, signals in signal_config.items():
+                if not signals: continue # Skip if empty list/dict
+
                 # Handle nested dicts (like Mode E)
-                if isinstance(signals, dict):
+                if tf_key in ['price_action_signals', 'indicator_signals']:
                     # This is a nested structure, e.g., {'htf': {...}, 'ttf': {...}}
-                    # This happens in Mode E, we need to iterate its sub-keys
                     for nested_tf_key, nested_signals in signals.items():
                         df = htf_df if nested_tf_key == 'htf' else ttf_df if nested_tf_key == 'ttf' else ltf_df
                         for sig in nested_signals:
@@ -301,12 +347,22 @@ class BacktestingMixin:
             
             if direction == 'bullish':
                 wins = (active_returns > 0).sum()
+                winning_returns = active_returns[active_returns > 0]
+                losing_returns = active_returns[active_returns <= 0]
             else:
                 wins = (active_returns < 0).sum()
+                winning_returns = active_returns[active_returns < 0]
+                losing_returns = active_returns[active_returns >= 0]
             
             total_signals = len(active_returns)
             win_rate = wins / total_signals if total_signals > 0 else 0
             avg_return = active_returns.mean()
+            
+            # --- START OF METRICS FIX ---
+            avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
+            avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
+            profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
+            # --- END OF METRICS FIX ---
             
             strategy.update({
                 'backtest_win_rate': win_rate,
@@ -314,6 +370,9 @@ class BacktestingMixin:
                 'backtest_wins': int(wins),
                 'backtest_losses': int(total_signals - wins),
                 'avg_return': avg_return,
+                'avg_win': avg_win,         # ADDED
+                'avg_loss': avg_loss,       # ADDED
+                'profit_factor': profit_factor, # ADDED
                 'performance_score': win_rate * (1 + abs(avg_return)) # Simple score
             })
             
@@ -324,6 +383,10 @@ class BacktestingMixin:
             print(f"❌ Error in generic MTF backtest for {strategy.get('id')}: {e}")
             print(traceback.format_exc())
             return strategy
+
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SECTION 4: Realistic & Regime Backtesting (for Single-TF)
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     def realistic_backtest(self, strategy, transaction_cost=0.001, max_position_size=0.1):
         """Vectorized realistic backtesting"""
@@ -413,10 +476,11 @@ class BacktestingMixin:
             return strategy
         
         regime_performance = {}
-        regimes = df['market_regime'].unique()
+        # FIX: Use the new 'historical_regime' column
+        regimes = df['historical_regime'].unique() 
         
         for regime in regimes:
-            regime_mask = (df['market_regime'] == regime).values
+            regime_mask = (df['historical_regime'] == regime).values
             if regime_mask.sum() < 10:
                 continue
             
@@ -449,6 +513,27 @@ class BacktestingMixin:
         strategy['regime_robustness_score'] = self._calculate_regime_robustness(regime_performance)
         
         return strategy
+
+    def _calculate_regime_robustness(self, regime_performance):
+        """Calculates a score based on how well a strategy performs across regimes."""
+        if not regime_performance:
+            return 0
+        
+        win_rates = [v['win_rate'] for v in regime_performance.values() if v['sample_size'] > 10]
+        if not win_rates:
+            return 0
+            
+        avg_win_rate = np.mean(win_rates)
+        std_dev = np.std(win_rates)
+        
+        # Score favors consistency (low std_dev) and high avg_win_rate
+        robustness_score = avg_win_rate * (1 - std_dev)
+        return max(0, robustness_score) # Ensure score is not negative
+
+
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SECTION 5: Walk-Forward & Metric Helpers
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     def walk_forward_detailed(self, df, signal_states, horizons=(3, 5, 10), 
                                 window=500, step=100, cost_bps=5, 
@@ -534,16 +619,14 @@ class BacktestingMixin:
         excess_returns = returns - risk_free_rate
         
         if excess_returns.std() > 0:
-            metrics['sharpe_ratio'] = (excess_returns.mean() / excess_returns.std() * 
-                                    np.sqrt(periods_per_year))
+            metrics['sharpe_ratio'] = (excess_returns.mean() / excess_returns.std() * np.sqrt(periods_per_year))
         else:
             metrics['sharpe_ratio'] = 0
         
         downside_returns = returns[returns < 0]
         downside_volatility = downside_returns.std() if len(downside_returns) > 0 else 0
         if downside_volatility > 0:
-            metrics['sortino_ratio'] = (excess_returns.mean() / downside_volatility * 
-                                    np.sqrt(periods_per_year))
+            metrics['sortino_ratio'] = (excess_returns.mean() / downside_volatility * np.sqrt(periods_per_year))
         else:
             metrics['sortino_ratio'] = 0
         
@@ -565,11 +648,14 @@ class BacktestingMixin:
         metrics['var_95'] = np.percentile(returns, 5)
         metrics['cvar_95'] = returns[returns <= metrics['var_95']].mean()
         
-        if metrics['avg_loss'] != 0:
+        if metrics['avg_loss'] != 0 and metrics['avg_win'] > 0:
             win_prob = metrics['win_rate']
             win_avg = metrics['avg_win']
             loss_avg = abs(metrics['avg_loss'])
-            metrics['kelly_criterion'] = win_prob - (1 - win_prob) / (win_avg / loss_avg)
+            if loss_avg > 0:
+                metrics['kelly_criterion'] = win_prob - (1 - win_prob) / (win_avg / loss_avg)
+            else:
+                metrics['kelly_criterion'] = 0
         else:
             metrics['kelly_criterion'] = 0
         
@@ -583,3 +669,56 @@ class BacktestingMixin:
         metrics['max_losing_streak'] = self._calculate_max_streak(returns <= 0)
         
         return metrics
+
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # SECTION 6: Vectorized Metric Helpers (Added)
+    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    def _calculate_sharpe_fast(self, returns, periods_per_year=252*24):
+        """Fast vectorized sharpe ratio calculation"""
+        if len(returns) < 2:
+            return 0.0
+        
+        std_dev = np.std(returns)
+        if std_dev == 0:
+            return 0.0
+            
+        return np.mean(returns) / std_dev * np.sqrt(periods_per_year)
+
+    def _calculate_sortino_fast(self, returns, periods_per_year=252*24):
+        """Fast vectorized sortino ratio calculation"""
+        if len(returns) < 2:
+            return 0.0
+            
+        downside_returns = returns[returns < 0]
+        downside_std_dev = np.std(downside_returns)
+        
+        if downside_std_dev == 0:
+            return 0.0
+            
+        return np.mean(returns) / downside_std_dev * np.sqrt(periods_per_year)
+
+    def _calculate_max_drawdown_fast(self, cumulative_returns):
+        """Fast vectorized max drawdown calculation"""
+        if len(cumulative_returns) == 0:
+            return 0.0
+            
+        running_max = np.maximum.accumulate(cumulative_returns)
+        drawdown = (cumulative_returns - running_max) / running_max
+        drawdown[running_max == 0] = 0 # Avoid division by zero at start
+        return np.min(drawdown)
+
+    def _calculate_max_streak(self, bool_array):
+        """Vectorized maximum consecutive True values"""
+        if len(bool_array) == 0:
+            return 0
+        
+        bool_array = np.asarray(bool_array, dtype=bool)
+        diff = np.diff(np.concatenate(([False], bool_array, [False])).astype(int))
+        starts = np.where(diff == 1)[0]
+        ends = np.where(diff == -1)[0]
+        
+        if len(starts) == 0:
+            return 0
+        
+        return int((ends - starts).max())
