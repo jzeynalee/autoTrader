@@ -1274,3 +1274,24 @@ class AnalysisHelpersMixin:
                     if states is not None:
                         active_mask &= (states == direction_str)
         return active_mask
+    def _extract_strategy_returns(self, strategy):
+            """Extract historical returns for a strategy"""
+            pair_tf = strategy['pair_tf']
+            signal_name = strategy['signal_name']
+            direction = strategy['direction']
+            
+            if pair_tf not in self.all_dataframes:
+                return None
+            
+            df = self.all_dataframes[pair_tf].copy()
+            df = self.identify_price_states(df)
+            signal_states = self.get_or_compute_states(df, signal_name)
+            
+            if signal_states is None:
+                return None
+            
+            active_mask = signal_states == direction
+            active_returns = df.loc[active_mask, 'future_return']
+            aligned_returns = active_returns.reindex(df.index).fillna(0)
+            
+            return aligned_returns

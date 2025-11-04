@@ -19,13 +19,21 @@ class BacktestingMixin:
         """
         Enhanced backtesting for legacy MTF strategies (Modes A, B, C)
         FIXED: Now correctly calculates avg_win, avg_loss, and profit_factor.
+        FIXED: Passes 'pair_tf' to get_or_compute_states.
+        FIXED: Dynamically gets 'pair' from strategy.
         """
         if not strategy['type'].startswith('mtf_'):
             return strategy
         
+        # --- START OF FIX: DYNAMIC PAIR ---
+        # Get pair from strategy (e.g., 'btc_usdt_1m' -> 'btc_usdt')
+        pair_tf = strategy.get('pair_tf', 'btc_usdt_1m')
+        pair = "_".join(pair_tf.split('_')[:2])
+        # --- END OF FIX ---
+
         # Get the aligned dataframes
         htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(
-            "BTC_USDT",  # Assuming BTC_USDT for now
+            pair,
             strategy['htf_timeframe'],
             strategy['ttf_timeframe'], 
             strategy['ltf_timeframe']
@@ -34,10 +42,15 @@ class BacktestingMixin:
         if htf_df is None:
             return strategy
         
-        # Get indicator states
-        htf_states = self.get_or_compute_states(htf_df, strategy['htf_indicator'])
-        ttf_states = self.get_or_compute_states(ttf_df, strategy['ttf_indicator'])
-        ltf_states = self.get_or_compute_states(ltf_df, strategy['ltf_indicator'])
+        # --- START OF FIX: PASS pair_tf ---
+        htf_pair_tf = f"{pair}_{strategy['htf_timeframe']}"
+        ttf_pair_tf = f"{pair}_{strategy['ttf_timeframe']}"
+        ltf_pair_tf = f"{pair}_{strategy['ltf_timeframe']}"
+
+        htf_states = self.get_or_compute_states(htf_df, strategy['htf_indicator'], htf_pair_tf)
+        ttf_states = self.get_or_compute_states(ttf_df, strategy['ttf_indicator'], ttf_pair_tf)
+        ltf_states = self.get_or_compute_states(ltf_df, strategy['ltf_indicator'], ltf_pair_tf)
+        # --- END OF FIX ---
         
         if any(states is None for states in [htf_states, ttf_states, ltf_states]):
             return strategy
@@ -46,7 +59,6 @@ class BacktestingMixin:
         
         # Apply the specific MTF mode logic
         if strategy['type'] == 'mtf_mode_a':
-            # Strict layered: all three must agree
             if strategy['direction'] == 'bullish':
                 active_mask = (
                     (htf_states == 'bullish') & 
@@ -61,7 +73,6 @@ class BacktestingMixin:
                 )
         
         elif strategy['type'] == 'mtf_mode_b':
-            # Flexible: 2 of 3 based on confluence type
             confluence_type = strategy['confluence_type']
             htf_bull = htf_states == 'bullish'
             ttf_bull = ttf_states == 'bullish' 
@@ -71,22 +82,15 @@ class BacktestingMixin:
             ltf_bear = ltf_states == 'bearish'
             
             if strategy['direction'] == 'bullish':
-                if confluence_type == 'HTF+TTF':
-                    active_mask = htf_bull & ttf_bull
-                elif confluence_type == 'HTF+LTF':
-                    active_mask = htf_bull & ltf_bull
-                else:  # TTF+LTF
-                    active_mask = ttf_bull & ltf_bull
+                if confluence_type == 'HTF+TTF': active_mask = htf_bull & ttf_bull
+                elif confluence_type == 'HTF+LTF': active_mask = htf_bull & ltf_bull
+                else: active_mask = ttf_bull & ltf_bull # TTF+LTF
             else:
-                if confluence_type == 'HTF+TTF':
-                    active_mask = htf_bear & ttf_bear
-                elif confluence_type == 'HTF+LTF':
-                    active_mask = htf_bear & ltf_bear
-                else:  # TTF+LTF
-                    active_mask = ttf_bear & ltf_bear
+                if confluence_type == 'HTF+TTF': active_mask = htf_bear & ttf_bear
+                elif confluence_type == 'HTF+LTF': active_mask = htf_bear & ltf_bear
+                else: active_mask = ttf_bear & ltf_bear # TTF+LTF
         
         elif strategy['type'] == 'mtf_mode_c':
-            # Weighted scoring
             htf_scores = htf_states.map({'bullish': 1, 'bearish': -1, 'neutral': 0}).fillna(0)
             ttf_scores = ttf_states.map({'bullish': 1, 'bearish': -1, 'neutral': 0}).fillna(0)
             ltf_scores = ltf_states.map({'bullish': 1, 'bearish': -1, 'neutral': 0}).fillna(0)
@@ -118,11 +122,9 @@ class BacktestingMixin:
         win_rate = wins / total_signals if total_signals > 0 else 0
         avg_return = active_returns.mean()
         
-        # --- START OF METRICS FIX ---
         avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
         avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
         profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
-        # --- END OF METRICS FIX ---
         
         strategy.update({
             'backtest_win_rate': win_rate,
@@ -130,9 +132,9 @@ class BacktestingMixin:
             'backtest_wins': int(wins),
             'backtest_losses': int(total_signals - wins),
             'avg_return': avg_return,
-            'avg_win': avg_win,         # ADDED
-            'avg_loss': avg_loss,       # ADDED
-            'profit_factor': profit_factor, # ADDED
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
             'performance_score': win_rate
         })
         
@@ -145,14 +147,20 @@ class BacktestingMixin:
     def backtest_mtf_strategy_enhanced(self, strategy):
         """
         Enhanced backtesting with advanced price action strategy support (Modes F, G)
-        FIXED: Now correctly calculates avg_win, avg_loss, and profit_factor.
+        FIXED: Passes 'pair_tf' to get_or_compute_states.
+        FIXED: Dynamically gets 'pair' from strategy.
         """
         if not strategy['type'].startswith('mtf_'):
             return strategy
         
+        # --- START OF FIX: DYNAMIC PAIR ---
+        pair_tf = strategy.get('pair_tf', 'btc_usdt_1m')
+        pair = "_".join(pair_tf.split('_')[:2])
+        # --- END OF FIX ---
+
         # Get the aligned dataframes with advanced patterns
         htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(
-            "btc_usdt",
+            pair,
             strategy['htf_timeframe'],
             strategy['ttf_timeframe'], 
             strategy['ltf_timeframe']
@@ -169,51 +177,44 @@ class BacktestingMixin:
         
         active_mask = pd.Series(True, index=ltf_df.index) # Default mask
         
+        # --- START OF FIX: PASS pair_tf ---
+        htf_pair_tf = f"{pair}_{strategy['htf_timeframe']}"
+        ttf_pair_tf = f"{pair}_{strategy['ttf_timeframe']}"
+        ltf_pair_tf = f"{pair}_{strategy['ltf_timeframe']}"
+        # --- END OF FIX ---
+
         # Apply the specific MTF mode logic
         if strategy['type'] == 'mtf_mode_f':
-            # Advanced Structure Breakout mode
-            
-            # Check all advanced signals in the setup
-            for tf_signals in [strategy.get('htf_signals', []), 
-                            strategy.get('ttf_signals', []), 
-                            strategy.get('ltf_signals', [])]:
+            for tf_key, tf_signals in [('htf', strategy.get('htf_signals', [])), 
+                                       ('ttf', strategy.get('ttf_signals', [])), 
+                                       ('ltf', strategy.get('ltf_signals', []))]:
+                df = htf_df if tf_key == 'htf' else (ttf_df if tf_key == 'ttf' else ltf_df)
+                current_pair_tf = htf_pair_tf if tf_key == 'htf' else (ttf_pair_tf if tf_key == 'ttf' else ltf_pair_tf)
+                
                 for sig in tf_signals:
-                    df = htf_df if tf_signals == strategy.get('htf_signals') else \
-                        ttf_df if tf_signals == strategy.get('ttf_signals') else ltf_df
-                    
                     if sig in df.columns:
-                        states = self.get_or_compute_states(df, sig)
+                        states = self.get_or_compute_states(df, sig, current_pair_tf)
                         if states is not None:
-                            if strategy['direction'] == 'bullish':
-                                active_mask &= (states == 'bullish')
-                            else:
-                                active_mask &= (states == 'bearish')
+                            active_mask &= (states == 'bullish' if strategy['direction'] == 'bullish' else states == 'bearish')
         
         elif strategy['type'] == 'mtf_mode_g':
-            # Momentum Divergence mode
-            
-            # Check momentum and divergence signals
-            for tf_signals in [strategy.get('htf_signals', []), 
-                            strategy.get('ttf_signals', []), 
-                            strategy.get('ltf_signals', [])]:
+            for tf_key, tf_signals in [('htf', strategy.get('htf_signals', [])), 
+                                       ('ttf', strategy.get('ttf_signals', [])), 
+                                       ('ltf', strategy.get('ltf_signals', []))]:
+                df = htf_df if tf_key == 'htf' else (ttf_df if tf_key == 'ttf' else ltf_df)
+                current_pair_tf = htf_pair_tf if tf_key == 'htf' else (ttf_pair_tf if tf_key == 'ttf' else ltf_pair_tf)
+
                 for sig in tf_signals:
-                    df = htf_df if tf_signals == strategy.get('htf_signals') else \
-                        ttf_df if tf_signals == strategy.get('ttf_signals') else ltf_df
-                    
                     if sig in df.columns:
-                        states = self.get_or_compute_states(df, sig)
+                        states = self.get_or_compute_states(df, sig, current_pair_tf)
                         if states is not None:
-                            # More flexible for momentum strategies
                             if 'trend_structure' in sig:
                                 if strategy['direction'] == 'bullish':
                                     active_mask &= (~states.isin(['strong_downtrend']))
                                 else:
                                     active_mask &= (~states.isin(['strong_uptrend']))
                             else:
-                                if strategy['direction'] == 'bullish':
-                                    active_mask &= (states == 'bullish')
-                                else:
-                                    active_mask &= (states == 'bearish')
+                                active_mask &= (states == 'bullish' if strategy['direction'] == 'bullish' else states == 'bearish')
         
         else:
             # Use existing logic for other modes
@@ -237,12 +238,9 @@ class BacktestingMixin:
         total_signals = len(active_returns)
         win_rate = wins / total_signals if total_signals > 0 else 0
         avg_return = active_returns.mean()
-
-        # --- START OF METRICS FIX ---
         avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
         avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
         profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
-        # --- END OF METRICS FIX ---
         
         strategy.update({
             'backtest_win_rate': win_rate,
@@ -250,9 +248,9 @@ class BacktestingMixin:
             'backtest_wins': int(wins),
             'backtest_losses': int(total_signals - wins),
             'avg_return': avg_return,
-            'avg_win': avg_win,         # ADDED
-            'avg_loss': avg_loss,       # ADDED
-            'profit_factor': profit_factor, # ADDED
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
             'performance_score': win_rate
         })
         
@@ -264,14 +262,19 @@ class BacktestingMixin:
     
     def backtest_mtf_strategy_generic(self, strategy):
         """
-        A generic backtester for all modern MTF strategies that use the
-        'htf_signals', 'ttf_signals', and 'ltf_signals' dictionary structure.
-        FIXED: Now correctly calculates avg_win, avg_loss, and profit_factor.
+        A generic backtester for all modern MTF strategies.
+        FIXED: Passes 'pair_tf' to get_or_compute_states.
+        FIXED: Dynamically gets 'pair' from strategy.
         """
         try:
+            # --- START OF FIX: DYNAMIC PAIR ---
+            pair_tf = strategy.get('pair_tf', 'btc_usdt_1m')
+            pair = "_".join(pair_tf.split('_')[:2])
+            # --- END OF FIX ---
+
             # Get the aligned dataframes with advanced patterns
             htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(
-                "btc_usdt",  # Assuming btc_usdt for now
+                pair,
                 strategy['htf_timeframe'],
                 strategy['ttf_timeframe'], 
                 strategy['ltf_timeframe']
@@ -281,7 +284,6 @@ class BacktestingMixin:
                 print(f"Warning: Could not get data for strategy {strategy.get('id')}")
                 return strategy
 
-            # Ensure dataframes have all advanced patterns, as discovery did
             htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
             ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
             ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
@@ -290,7 +292,12 @@ class BacktestingMixin:
             active_mask = pd.Series(True, index=ltf_df.index)
             direction = strategy['direction']
             
-            # Get all signal sources from the strategy
+            # --- START OF FIX: PASS pair_tf ---
+            htf_pair_tf = f"{pair}_{strategy['htf_timeframe']}"
+            ttf_pair_tf = f"{pair}_{strategy['ttf_timeframe']}"
+            ltf_pair_tf = f"{pair}_{strategy['ltf_timeframe']}"
+            # --- END OF FIX ---
+
             signal_groups = [
                 strategy.get('signals'),
                 strategy.get('price_action_signals'),
@@ -299,7 +306,6 @@ class BacktestingMixin:
                 strategy.get('adaptive_signal_set')
             ]
             
-            # Find the first valid signal definition
             signal_config = None
             for group in signal_groups:
                 if isinstance(group, dict) and ('htf' in group or 'ttf' in group or 'ltf' in group):
@@ -307,7 +313,6 @@ class BacktestingMixin:
                     break
             
             if not signal_config:
-                # Fallback for modes F, G, H, L, M, N if 'signals' key is missing/wrong
                 signal_config = {
                     'htf': strategy.get('htf_signals', []),
                     'ttf': strategy.get('ttf_signals', []),
@@ -316,24 +321,25 @@ class BacktestingMixin:
             
             # Apply the mask
             for tf_key, signals in signal_config.items():
-                if not signals: continue # Skip if empty list/dict
+                if not signals: continue
 
                 # Handle nested dicts (like Mode E)
-                if tf_key in ['price_action_signals', 'indicator_signals']:
-                    # This is a nested structure, e.g., {'htf': {...}, 'ttf': {...}}
+                if tf_key in ['price_action_signals', 'indicator_signals'] and isinstance(signals, dict):
                     for nested_tf_key, nested_signals in signals.items():
                         df = htf_df if nested_tf_key == 'htf' else ttf_df if nested_tf_key == 'ttf' else ltf_df
+                        current_pair_tf = htf_pair_tf if nested_tf_key == 'htf' else (ttf_pair_tf if nested_tf_key == 'ttf' else ltf_pair_tf)
                         for sig in nested_signals:
                             if sig in df.columns:
-                                states = self.get_or_compute_states(df, sig)
+                                states = self.get_or_compute_states(df, sig, current_pair_tf)
                                 if states is not None:
                                     active_mask &= (states == 'bullish' if direction == 'bullish' else states == 'bearish')
-                else:
-                    # This is a flat list, e.g., {'htf': ['sig1', 'sig2']}
+                # Handle flat list
+                elif isinstance(signals, list):
                     df = htf_df if tf_key == 'htf' else ttf_df if tf_key == 'ttf' else ltf_df
+                    current_pair_tf = htf_pair_tf if tf_key == 'htf' else (ttf_pair_tf if tf_key == 'ttf' else ltf_pair_tf)
                     for sig in signals:
                         if sig in df.columns:
-                            states = self.get_or_compute_states(df, sig)
+                            states = self.get_or_compute_states(df, sig, current_pair_tf)
                             if states is not None:
                                 active_mask &= (states == 'bullish' if direction == 'bullish' else states == 'bearish')
 
@@ -358,11 +364,9 @@ class BacktestingMixin:
             win_rate = wins / total_signals if total_signals > 0 else 0
             avg_return = active_returns.mean()
             
-            # --- START OF METRICS FIX ---
             avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
             avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
             profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
-            # --- END OF METRICS FIX ---
             
             strategy.update({
                 'backtest_win_rate': win_rate,
@@ -370,10 +374,10 @@ class BacktestingMixin:
                 'backtest_wins': int(wins),
                 'backtest_losses': int(total_signals - wins),
                 'avg_return': avg_return,
-                'avg_win': avg_win,         # ADDED
-                'avg_loss': avg_loss,       # ADDED
-                'profit_factor': profit_factor, # ADDED
-                'performance_score': win_rate * (1 + abs(avg_return)) # Simple score
+                'avg_win': avg_win,
+                'avg_loss': avg_loss,
+                'profit_factor': profit_factor,
+                'performance_score': win_rate * (1 + abs(avg_return))
             })
             
             return strategy
@@ -389,14 +393,19 @@ class BacktestingMixin:
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     def realistic_backtest(self, strategy, transaction_cost=0.001, max_position_size=0.1):
-        """Vectorized realistic backtesting"""
+        """
+        Vectorized realistic backtesting
+        FIXED: Passes 'pair_tf' to get_or_compute_states.
+        """
         pair_tf = strategy['pair_tf']
         df = self.all_dataframes[pair_tf].copy()
         
         df = self.enhanced_market_regime_detection(df)
         df = self.identify_price_states(df)
         
-        signal_states = self.get_or_compute_states(df, strategy['signal_name'])
+        # --- START OF FIX ---
+        signal_states = self.get_or_compute_states(df, strategy['signal_name'], pair_tf)
+        # --- END OF FIX ---
         
         if signal_states is None:
             return strategy
@@ -463,27 +472,49 @@ class BacktestingMixin:
         return strategy
 
     def regime_aware_backtesting(self, strategy_key, strategy):
-        """Backtest strategy performance across different market regimes"""
+        """
+        Backtest strategy performance across different market regimes
+        FIXED: Passes 'pair_tf' to get_or_compute_states.
+        FIXED: Uses new 'historical_regime' column.
+        """
         pair_tf = strategy['pair_tf']
         df = self.all_dataframes[pair_tf].copy()
         
         df = self.enhanced_market_regime_detection(df)
         df = self.identify_price_states(df)
         
-        signal_states = self.get_or_compute_states(df, strategy['signal_name'])
+        # --- START OF FIX ---
+        signal_states = self.get_or_compute_states(df, strategy['signal_name'], pair_tf)
+        # --- END OF FIX ---
         
         if signal_states is None:
             return strategy
         
         regime_performance = {}
         # FIX: Use the new 'historical_regime' column
-        regimes = df['historical_regime'].unique() 
+        if 'historical_regime' not in df.columns:
+            print(f"  ⚠️  Missing 'historical_regime' for {pair_tf}, skipping regime backtest.")
+            return strategy
+            
+        regimes = df['historical_regime'].unique()
         
         for regime in regimes:
             regime_mask = (df['historical_regime'] == regime).values
+            
+            # --- START OF INDEXERROR FIX ---
+            # This check is now redundant because the cache key is fixed in core.py,
+            # but it provides good defense.
+            if len(signal_states.values) != len(regime_mask):
+                print(f"  ⚠️  CRITICAL MISMATCH in regime_aware_backtesting for {strategy_key}.")
+                print(f"     Signal state length: {len(signal_states.values)}, DF/Regime length: {len(regime_mask)}")
+                print(f"     This is a caching bug in core.py. Skipping this strategy's regime test.")
+                break 
+            # --- END OF INDEXERROR FIX ---
+            
             if regime_mask.sum() < 10:
                 continue
             
+            # Apply the regime mask to signals and returns
             regime_signals = signal_states.values[regime_mask]
             regime_returns = df['future_return'].values[regime_mask]
             
@@ -614,7 +645,7 @@ class BacktestingMixin:
         metrics['avg_return'] = returns.mean()
         metrics['volatility'] = returns.std()
         
-        periods_per_year = 365 * 24
+        periods_per_year = 365 * 24 # Assuming 1-hour data, adjust if needed
         risk_free_rate = 0.02 / periods_per_year
         excess_returns = returns - risk_free_rate
         
@@ -703,10 +734,17 @@ class BacktestingMixin:
         if len(cumulative_returns) == 0:
             return 0.0
             
+        # Ensure input is a numpy array
+        cumulative_returns = np.asarray(cumulative_returns)
         running_max = np.maximum.accumulate(cumulative_returns)
-        drawdown = (cumulative_returns - running_max) / running_max
-        drawdown[running_max == 0] = 0 # Avoid division by zero at start
-        return np.min(drawdown)
+        drawdown = (cumulative_returns - running_max)
+        
+        # Handle cases where running_max is zero to avoid division by zero
+        running_max_safe = np.where(running_max == 0, 1, running_max)
+        drawdown_pct = drawdown / running_max_safe
+        drawdown_pct[running_max == 0] = 0 # Set drawdown to 0 where max was 0
+        
+        return np.min(drawdown_pct)
 
     def _calculate_max_streak(self, bool_array):
         """Vectorized maximum consecutive True values"""
@@ -722,3 +760,4 @@ class BacktestingMixin:
             return 0
         
         return int((ends - starts).max())
+
