@@ -1018,8 +1018,7 @@ class AnalysisHelpersMixin:
             planner.set_by_atr(atr_period=14, multiplier_sl=1.5, multiplier_tp=2.5)
             
             # Validate risk-reward
-            planner.validate_risk_reward(min_rr=2.0)
-            
+            planner.validate_risk_reward(min_rr=1.5)            
             # Get the plan
             sl_tp_plan = planner.get_plan()
             
@@ -1304,3 +1303,36 @@ class AnalysisHelpersMixin:
             aligned_returns = active_returns.reindex(df.index).fillna(0)
             
             return aligned_returns
+    
+    def _score_to_quality(self, score):
+            """Helper to convert a 0.0-1.0 score to a quality string."""
+            if score >= 0.8:
+                return 'excellent'
+            elif score >= 0.6:
+                return 'good'
+            elif score >= 0.4:
+                return 'fair'
+            else:
+                return 'poor'
+    
+    def _calculate_sync_ratio(self, htf_pullbacks, ttf_pullbacks, ltf_pullbacks):
+        """Helper to calculate pullback sync ratio."""
+        if not htf_pullbacks or not ttf_pullbacks:
+            return 0.0
+        
+        # Find overlapping pullbacks
+        htf_set = set(htf_pullbacks)
+        ttf_set = set(ttf_pullbacks)
+        ltf_set = set(ltf_pullbacks)
+        
+        # Overlap between HTF and TTF
+        htf_ttf_overlap = len(htf_set.intersection(ttf_set))
+        
+        # Overlap between TTF and LTF
+        ttf_ltf_overlap = len(ttf_set.intersection(ltf_set))
+        
+        # Total sync score (simplified)
+        total_possible_syncs = len(htf_set) + len(ttf_set)
+        total_actual_syncs = htf_ttf_overlap + ttf_ltf_overlap
+        
+        return total_actual_syncs / total_possible_syncs if total_possible_syncs > 0 else 0.0

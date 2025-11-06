@@ -86,7 +86,10 @@ class SLTPPlanner:
             ltf_support = ltf_lows[ltf_lows < self.entry].max() if not ltf_lows[ltf_lows < self.entry].empty else htf_support
             
             # Use LTF if it's within 1% of HTF (tighter stop)
-            sl = ltf_support if abs(ltf_support - htf_support)/htf_support < 0.01 else htf_support
+            if htf_support == 0:
+                sl = ltf_support  # Fallback to LTF support if HTF support is 0
+            else:
+                sl = ltf_support if abs(ltf_support - htf_support)/htf_support < 0.01 else htf_support
             sl = sl * 0.995  # Small buffer
             
             # TP: Use TTF resistance as primary target

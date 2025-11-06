@@ -648,29 +648,29 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             # Bullish structural breakouts
             'structural_breakout_bull': {
                 'description': 'HTF trend + TTF structure break + LTF volume confirmation',
-                'htf': ['trend_structure', 'market_structure'],
-                'ttf': ['structure_break_bullish', 'higher_highs_lower_lows'],
-                'ltf': ['volume_breakout_confirmation', 'momentum_continuation']
+                'htf': ['trend_structure'],
+                'ttf': ['structure_break_bullish'],
+                'ltf': ['momentum_continuation']
             },
             'false_breakout_reversal_bull': {
                 'description': 'False bearish breakout followed by bullish reversal',
-                'htf': ['trend_structure', 'swing_failure'],
-                'ttf': ['false_breakout_bearish', 'momentum_divergence_bullish'],
-                'ltf': ['volume_breakout_confirmation', 'structure_break_bullish']
+                'htf': ['trend_structure'],
+                'ttf': ['false_breakout_bearish'],
+                'ltf': ['structure_break_bullish']
             },
             
             # Bearish structural breakouts  
             'structural_breakout_bear': {
                 'description': 'HTF downtrend + TTF structure break + LTF volume confirmation',
-                'htf': ['trend_structure', 'market_structure'],
-                'ttf': ['structure_break_bearish', 'higher_highs_lower_lows'],
-                'ltf': ['volume_breakout_confirmation', 'momentum_continuation']
+                'htf': ['trend_structure'],
+                'ttf': ['higher_highs_lower_lows'],
+                'ltf': ['momentum_continuation']
             },
             'false_breakout_reversal_bear': {
                 'description': 'False bullish breakout followed by bearish reversal',
-                'htf': ['trend_structure', 'swing_failure'],
-                'ttf': ['false_breakout_bullish', 'momentum_divergence_bearish'],
-                'ltf': ['volume_breakout_confirmation', 'structure_break_bearish']
+                'htf': ['trend_structure'],
+                'ttf': ['false_breakout_bullish'],
+                'ltf': ['volume_breakout_confirmation']
             }
         }
         
@@ -706,9 +706,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 for sig, states in htf_states.items():
                     if states is not None:
                         if direction == 'bullish':
-                            advanced_mask &= (states.isin(['bullish', 'strong_uptrend', 'weak_uptrend']))
+                            advanced_mask &= (states == 'bullish')
                         else:
-                            advanced_mask &= (states.isin(['bearish', 'strong_downtrend', 'weak_downtrend']))
+                            advanced_mask &= (states == 'bearish')
                 
                 # TTF must show structural signals
                 for sig, states in ttf_states.items():
@@ -781,29 +781,29 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             # Bullish momentum divergence
             'momentum_divergence_bull': {
                 'description': 'Price making lower lows but momentum showing bullish divergence',
-                'htf': ['trend_structure', 'market_structure'],
-                'ttf': ['momentum_divergence_bullish', 'swing_failure'],
-                'ltf': ['volume_divergence', 'false_breakout_bearish']
+                'htf': ['trend_structure'],
+                'ttf': ['momentum_divergence_bullish'],
+                'ltf': ['false_breakout_bearish']
             },
             'momentum_reversal_bull': {
                 'description': 'Momentum shift from bearish to bullish across timeframes',
-                'htf': ['momentum_continuation', 'trend_structure'],
-                'ttf': ['momentum_divergence_bullish', 'volume_breakout_confirmation'],
-                'ltf': ['structure_break_bullish', 'higher_highs_lower_lows']
+                'htf': ['trend_structure'],
+                'ttf': ['momentum_divergence_bullish'],
+                'ltf': ['structure_break_bullish']
             },
             
             # Bearish momentum divergence
             'momentum_divergence_bear': {
                 'description': 'Price making higher highs but momentum showing bearish divergence',
-                'htf': ['trend_structure', 'market_structure'],
-                'ttf': ['momentum_divergence_bearish', 'swing_failure'],
-                'ltf': ['volume_divergence', 'false_breakout_bullish']
+                'htf': ['trend_structure'],
+                'ttf': ['momentum_divergence_bearish'],
+                'ltf': ['false_breakout_bullish']
             },
             'momentum_reversal_bear': {
                 'description': 'Momentum shift from bullish to bearish across timeframes',
-                'htf': ['momentum_continuation', 'trend_structure'],
-                'ttf': ['momentum_divergence_bearish', 'volume_breakout_confirmation'],
-                'ltf': ['structure_break_bearish', 'higher_highs_lower_lows']
+                'htf': ['trend_structure'],
+                'ttf': ['momentum_divergence_bearish'],
+                'ltf': ['structure_break_bearish']
             }
         }
 
@@ -840,9 +840,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                         # For momentum strategies, we're more flexible on HTF trend
                         if 'trend_structure' in sig:
                             if direction == 'bullish':
-                                momentum_mask &= (~states.isin(['strong_downtrend']))
+                                momentum_mask &= (states != 'bearish')
                             else:
-                                momentum_mask &= (~states.isin(['strong_uptrend']))
+                                momentum_mask &= (states != 'bullish')
                         else:
                             if direction == 'bullish':
                                 momentum_mask &= (states == 'bullish')
@@ -926,18 +926,18 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'required_trend': 'strong_uptrend',
                 'description': 'Pullback in strong uptrend with multiple confirmations',
                 'signals': {
-                    'htf': ['trend_structure', 'higher_highs_lower_lows'],
-                    'ttf': ['pullback_complete_bull', 'healthy_bull_pullback'],
-                    'ltf': ['swing_low', 'volume_breakout_confirmation']
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bull'],
+                    'ltf': ['swing_low']
                 }
             },
             'uptrend_structure_break': {
                 'required_trend': 'uptrend',
                 'description': 'Structure break in established uptrend',
                 'signals': {
-                    'htf': ['trend_structure', 'market_structure'],
-                    'ttf': ['structure_break_bullish', 'momentum_continuation'],
-                    'ltf': ['volume_breakout_confirmation', 'higher_highs_lower_lows']
+                    'htf': ['trend_structure'],
+                    'ttf': ['structure_break_bullish'],
+                    'ltf': ['higher_highs_lower_lows']
                 }
             },
             
@@ -946,18 +946,18 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'required_trend': 'strong_downtrend', 
                 'description': 'Rally in strong downtrend with multiple confirmations',
                 'signals': {
-                    'htf': ['trend_structure', 'lower_highs_lower_lows'],
-                    'ttf': ['pullback_complete_bear', 'healthy_bear_pullback'],
-                    'ltf': ['swing_high', 'volume_breakout_confirmation']
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bear'],
+                    'ltf': ['swing_high']
                 }
             },
             'downtrend_structure_break': {
                 'required_trend': 'downtrend',
                 'description': 'Structure break in established downtrend',
                 'signals': {
-                    'htf': ['trend_structure', 'market_structure'],
-                    'ttf': ['structure_break_bearish', 'momentum_continuation'],
-                    'ltf': ['volume_breakout_confirmation', 'lower_highs_lower_lows']
+                    'htf': ['trend_structure'],
+                    'ttf': ['structure_break_bearish'],
+                    'ltf': ['lower_highs_lower_lows']
                 }
             }
         }
@@ -1079,9 +1079,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'required_trend': ['strong_uptrend', 'uptrend'],
                 'description': 'High-quality bullish pullback in uptrend',
                 'confirmation_signals': {
-                    'htf': ['trend_structure', 'higher_highs_lower_lows'],
-                    'ttf': ['pullback_complete_bull', 'volume_divergence'],
-                    'ltf': ['momentum_divergence_bullish', 'false_breakout_bearish']
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bull'],
+                    'ltf': ['momentum_divergence_bullish']
                 }
             },
             'hq_bearish_pullback': {
@@ -1089,9 +1089,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'required_trend': ['strong_downtrend', 'downtrend'],
                 'description': 'High-quality bearish pullback in downtrend',
                 'confirmation_signals': {
-                    'htf': ['trend_structure', 'lower_highs_lower_lows'],
-                    'ttf': ['pullback_complete_bear', 'volume_divergence'],
-                    'ltf': ['momentum_divergence_bearish', 'false_breakout_bullish']
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bear'],
+                    'ltf': ['momentum_divergence_bearish']
                 }
             }
         }
@@ -1223,36 +1223,36 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     'compatible_regimes': ['strong_trend_high_vol', 'strong_trend_normal_vol', 'weak_trend'],
                     'description': 'Momentum-based trend following in trending markets',
                     'signals': {
-                        'htf': ['trend_structure', 'adx'],
-                        'ttf': ['momentum_continuation', 'ma_alignment'],
-                        'ltf': ['pullback_complete_bull', 'structure_break_bullish']
+                        'htf': ['trend_structure'],
+                        'ttf': ['momentum_continuation'],
+                        'ltf': ['pullback_complete_bull']
                     }
                 },
                 'trend_pullback_entries': {
                     'compatible_regimes': ['strong_trend_normal_vol', 'weak_trend'],
                     'description': 'Pullback entries in established trends',
                     'signals': {
-                        'htf': ['trend_structure', 'higher_highs_lower_lows'],
-                        'ttf': ['pullback_complete_bull', 'healthy_bull_pullback'],
-                        'ltf': ['swing_low', 'near_fib_618', 'momentum_divergence_bullish']
+                        'htf': ['trend_structure'],
+                        'ttf': ['pullback_complete_bull'],
+                        'ltf': ['momentum_divergence_bullish']
                     }
                 },
                 'range_boundary_trading': {
                     'compatible_regimes': ['ranging_high_vol', 'ranging_normal_vol'],
                     'description': 'Trading range boundaries with mean reversion',
                     'signals': {
-                        'htf': ['market_structure', 'equal_highs_lows'],
-                        'ttf': ['swing_high', 'swing_low', 'momentum_divergence_bullish'],
-                        'ltf': ['false_breakout_bullish', 'rsi']
+                        'htf': ['market_structure'],
+                        'ttf': ['swing_high', 'swing_low'],
+                        'ltf': ['rsi']
                     }
                 },
                 'breakout_anticipation': {
                     'compatible_regimes': ['ranging_low_vol', 'transition_normal_vol'],
                     'description': 'Anticipating breakouts from low volatility ranges',
                     'signals': {
-                        'htf': ['market_structure', 'bb_width'],
-                        'ttf': ['volume_breakout_confirmation', 'momentum_continuation'],
-                        'ltf': ['structure_break_bullish', 'volume_breakout_confirmation']
+                        'htf': ['bb_width'],
+                        'ttf': ['momentum_continuation'],
+                        'ltf': ['structure_break_bullish']
                     }
                 }
             }
@@ -1348,9 +1348,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             'universal_momentum_capture': {
                 'description': 'Momentum capture strategy that adapts to multiple regimes',
                 'core_signals': {
-                    'htf': ['trend_structure', 'market_structure'],
-                    'ttf': ['momentum_continuation', 'volume_breakout_confirmation'],
-                    'ltf': ['structure_break_bullish', 'structure_break_bearish']
+                    'htf': ['trend_structure'],
+                    'ttf': ['momentum_continuation'],
+                    'ltf': ['structure_break_bullish']
                 },
                 'regime_adaptations': {
                     'trending': {
@@ -1370,9 +1370,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             'structure_based_breakout': {
                 'description': 'Structure-based breakout strategy with regime adaptation',
                 'core_signals': {
-                    'htf': ['market_structure', 'equal_highs_lows'],
+                    'htf': ['equal_highs_lows'],
                     'ttf': ['structure_break_bullish', 'structure_break_bearish'],
-                    'ltf': ['volume_breakout_confirmation', 'momentum_continuation']
+                    'ltf': ['momentum_continuation']
                 },
                 'regime_adaptations': {
                     'trending': {
@@ -1476,9 +1476,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'required_alignment': 'excellent',
                 'min_alignment_score': 0.8,
                 'signals': {
-                    'htf': ['trend_structure', 'market_structure'],
-                    'ttf': ['structure_break_bullish', 'volume_breakout_confirmation'],
-                    'ltf': ['momentum_continuation', 'higher_highs_lower_lows']
+                    'htf': ['trend_structure'],
+                    'ttf': ['structure_break_bullish'],
+                    'ltf': ['higher_highs_lower_lows']
                 }
             },
             {
@@ -1487,9 +1487,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'required_alignment': 'good',
                 'min_alignment_score': 0.6,
                 'signals': {
-                    'htf': ['trend_structure', 'higher_lows_pattern'],
-                    'ttf': ['pullback_complete_bull', 'healthy_bull_pullback'],
-                    'ltf': ['swing_low', 'volume_divergence']
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bull'],
+                    'ltf': ['swing_low']
                 }
             }
         ]
@@ -1576,9 +1576,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'volatility_regime': 'high_volatility',
                 'description': 'Breakout momentum strategy for high volatility periods',
                 'signals': {
-                    'htf': ['volatility_expansion', 'trend_structure'],
-                    'ttf': ['structure_break_bullish', 'volume_breakout_confirmation'],
-                    'ltf': ['momentum_continuation', 'volatility_breakout']
+                    'htf': ['trend_structure'],
+                    'ttf': ['structure_break_bullish'],
+                    'ltf': ['momentum_continuation']
                 },
                 'adaptive_params': {
                     'risk_multiplier': 0.7,
@@ -1591,8 +1591,8 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'volatility_regime': 'high_volatility', 
                 'description': 'Range expansion plays in high volatility',
                 'signals': {
-                    'htf': ['volatility_clustering', 'market_structure'],
-                    'ttf': ['equal_highs_lows', 'volume_breakout_confirmation'],
+                    'htf': ['market_structure'],
+                    'ttf': ['equal_highs_lows'],
                     'ltf': ['false_breakout_bullish', 'false_breakout_bearish']
                 },
                 'adaptive_params': {
@@ -1608,9 +1608,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'volatility_regime': 'low_volatility',
                 'description': 'Breakout from low volatility compression',
                 'signals': {
-                    'htf': ['volatility_compression', 'market_structure'],
-                    'ttf': ['bb_squeeze', 'volume_breakout_confirmation'],
-                    'ltf': ['structure_break_bullish', 'momentum_continuation']
+                    'htf': ['market_structure'],
+                    'ttf': ['bb_squeeze'],
+                    'ltf': ['structure_break_bullish']
                 },
                 'adaptive_params': {
                     'risk_multiplier': 1.2,
@@ -1623,9 +1623,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'volatility_regime': 'low_volatility',
                 'description': 'Mean reversion in low volatility ranges',
                 'signals': {
-                    'htf': ['volatility_compression', 'equal_highs_lows'],
-                    'ttf': ['swing_high', 'swing_low', 'rsi_extreme'],
-                    'ltf': ['momentum_divergence_bullish', 'momentum_divergence_bearish']
+                    'htf': ['equal_highs_lows'],
+                    'ttf': ['rsi_extreme'],
+                    'ltf': ['momentum_divergence_bullish']
                 },
                 'adaptive_params': {
                     'risk_multiplier': 1.0,
@@ -1640,9 +1640,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'volatility_regime': 'normal_volatility',
                 'description': 'Standard trend following in normal volatility',
                 'signals': {
-                    'htf': ['trend_structure', 'higher_highs_lower_lows'],
-                    'ttf': ['pullback_complete_bull', 'ma_alignment'],
-                    'ltf': ['swing_low', 'momentum_confirmation']
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bull'],
+                    'ltf': ['momentum_confirmation']
                 },
                 'adaptive_params': {
                     'risk_multiplier': 1.0,
@@ -1746,9 +1746,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     'required_flow': 'htf_to_ltf',
                     'momentum_strength': 'strong',
                     'signals': {
-                        'htf': ['trend_structure', 'momentum_continuation', 'higher_highs_lower_lows'],
-                        'ttf': ['pullback_complete_bull', 'momentum_continuation', 'volume_breakout_confirmation'],
-                        'ltf': ['swing_low', 'momentum_divergence_bullish', 'structure_break_bullish']
+                        'htf': ['trend_structure'],
+                        'ttf': ['pullback_complete_bull'],
+                        'ltf': ['structure_break_bullish']
                     },
                     'cascade_requirements': {
                         'htf_momentum': 'bullish',
@@ -1761,9 +1761,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     'required_flow': 'htf_to_ltf',
                     'momentum_strength': 'strong',
                     'signals': {
-                        'htf': ['trend_structure', 'momentum_continuation', 'lower_highs_lower_lows'],
-                        'ttf': ['pullback_complete_bear', 'momentum_continuation', 'volume_breakout_confirmation'],
-                        'ltf': ['swing_high', 'momentum_divergence_bearish', 'structure_break_bearish']
+                        'htf': ['trend_structure'],
+                        'ttf': ['pullback_complete_bear'],
+                        'ltf': ['structure_break_bearish']
                     },
                     'cascade_requirements': {
                         'htf_momentum': 'bearish',
@@ -1895,9 +1895,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     'name': 'bullish_trend_resumption',
                     'description': 'Strong trend + Pullback completion + Momentum confirmation',
                     'price_action': {
-                        'htf': ['trend_structure', 'higher_highs_lower_lows'],
-                        'ttf': ['pullback_complete_bull', 'healthy_bull_pullback'],
-                        'ltf': ['swing_low', 'structure_break_bullish']
+                        'htf': ['trend_structure'],
+                        'ttf': ['pullback_complete_bull'],
+                        'ltf': ['structure_break_bullish']
                     },
                     'indicators': {
                         'htf': ['adx', 'ema_50'],
@@ -1911,9 +1911,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     'name': 'bearish_reversal_confluence',
                     'description': 'Overbought conditions + Bearish divergence + Structure break',
                     'price_action': {
-                        'htf': ['market_structure', 'swing_failure'],
-                        'ttf': ['momentum_divergence_bearish', 'false_breakout_bullish'],
-                        'ltf': ['structure_break_bearish', 'volume_breakout_confirmation']
+                        'htf': ['market_structure'],
+                        'ttf': ['false_breakout_bullish'],
+                        'ltf': ['structure_break_bearish']
                     },
                     'indicators': {
                         'htf': ['rsi'],

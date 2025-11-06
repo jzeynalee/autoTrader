@@ -43,14 +43,20 @@ class ReportsMixin:
         
         strategies_with_results = [
             (k, v) for k, v in self.strategy_pool.items() 
-            if v.get('backtest_win_rate') is not None and v.get('backtest_total_signals', 0) >= 10 # Lowered threshold to see more
+            if v.get('backtest_win_rate') is not None and v.get('backtest_total_signals', 0) >= 50
         ]
         
         # Sort by performance score
         strategies_with_results.sort(key=lambda x: x[1].get('performance_score', 0), reverse=True)
+        unique_strategies = []
+        seen_performance_keys = set()
+        for key, strategy in strategies_with_results:
+            perf_key = (f"{strategy.get('backtest_win_rate', 0):.4f}", strategy.get('backtest_total_signals', 0))
+            if perf_key not in seen_performance_keys:
+                unique_strategies.append((key, strategy))
+                seen_performance_keys.add(perf_key)
 
-        
-        for i, (key, strategy) in enumerate(strategies_with_results[:top_n], 1):
+        for i, (key, strategy) in enumerate(unique_strategies[:top_n], 1):
             print(f"\n{'─'*80}")
             print(f"#{i} | {key} | {strategy['pair_tf']}")
             print(f"{'─'*80}")
@@ -250,14 +256,23 @@ class ReportsMixin:
                 'strategy_id': strategy_id,
                 'pair_timeframe': strategy['pair_tf'],
                 'signal_type': strategy['signal_type'],
-                'signal_name': strategy['signal_name'],
                 'direction': strategy['direction'],
                 'trade_direction': strategy['trade_direction'],
                 'win_rate': strategy['backtest_win_rate'],
                 'profit_factor': strategy['profit_factor'],
                 'expectancy': strategy.get('expectancy', 0),
-                'alert_condition': f"When {strategy['signal_name']} is {strategy['direction']}"
             }
+
+            # Handle MTF vs STF strategies
+            if strategy.get('type') == 'single_signal':
+                signal_name = strategy['signal_name']
+            else:
+                # Create a generic name for MTF strategies
+                signal_name = strategy.get('setup_name', strategy.get('pattern_name', strategy_id))
+            
+            config_entry['signal_name'] = signal_name
+            config_entry['alert_condition'] = f"When {signal_name} is {strategy['direction']}"
+
             monitoring_config['strategies'].append(config_entry)
         
         with open(filename, 'w') as f:
