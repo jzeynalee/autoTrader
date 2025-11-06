@@ -96,17 +96,18 @@ class AnalysisHelpersMixin:
         
         return adaptive_signals
 
-    def _create_adaptive_signal_mask(self, adaptive_signals, htf_df, ttf_df, ltf_df, direction):
+    def _create_adaptive_signal_mask(self, adaptive_signals, htf_df, ttf_df, ltf_df, direction, pair, htf_tf, ttf_tf, ltf_tf):
         """Create signal mask using adaptive signal set"""
         adaptive_mask = pd.Series(True, index=ltf_df.index)
         
         # Apply signals from each timeframe
         for tf, signals in adaptive_signals.items():
             df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+            current_pair_tf = f"{pair}_{htf_tf}" if tf == 'htf' else (f"{pair}_{ttf_tf}" if tf == 'ttf' else f"{pair}_{ltf_tf}")
             
             for signal in signals:
                 if signal in df.columns:
-                    states = self.get_or_compute_states(df, signal)
+                    states = self.get_or_compute_states(df, signal, current_pair_tf)
                     if states is not None:
                         if direction == 'bullish':
                             adaptive_mask &= (states == 'bullish')
@@ -117,12 +118,12 @@ class AnalysisHelpersMixin:
     
     def _create_mtf_alignment_cache_key(self, htf_df, ttf_df, ltf_df):
         """Create cache key for MTF alignment analysis"""
-        htf_key = f"{len(htf_df)}_{htf_df.index.iloc[-1]}_{htf_df['close'].iloc[-10]:.2f}"
-        ttf_key = f"{len(ttf_df)}_{ttf_df.index.iloc[-1]}_{ttf_df['close'].iloc[-10]:.2f}"
-        ltf_key = f"{len(ltf_df)}_{ltf_df.index.iloc[-1]}_{ltf_df['close'].iloc[-10]:.2f}"
+        htf_key = f"{len(htf_df)}_{htf_df.index[-1]}_{htf_df['close'].iloc[-10]:.2f}"
+        ttf_key = f"{len(ttf_df)}_{ttf_df.index[-1]}_{ttf_df['close'].iloc[-10]:.2f}"
+        ltf_key = f"{len(ltf_df)}_{ltf_df.index[-1]}_{ltf_df['close'].iloc[-10]:.2f}"
         return f"mtf_align_{hash(htf_key + ttf_key + ltf_key) & 0xFFFFFFFF}"
 
-    def analyze_mtf_structure_alignment(self, htf_df, ttf_df, ltf_df):
+    def get_mtf_structure_alignment(self, htf_df, ttf_df, ltf_df, pair, htf_tf, ttf_tf, ltf_tf):
         """Analyze MTF structure alignment without recursion"""
         if not hasattr(self, 'alignment_cache'): self.alignment_cache = {}
         cache_key = self._create_mtf_alignment_cache_key(htf_df, ttf_df, ltf_df)
@@ -131,7 +132,7 @@ class AnalysisHelpersMixin:
             return self.alignment_cache[cache_key]
         
         # Perform actual analysis (not recursive call)
-        alignment = self._perform_mtf_alignment_analysis(htf_df, ttf_df, ltf_df)
+        alignment = self._perform_mtf_alignment_analysis(htf_df, ttf_df, ltf_df, pair, htf_tf, ttf_tf, ltf_tf)
         
         # Cache the result
         self.alignment_cache[cache_key] = alignment
@@ -140,14 +141,14 @@ class AnalysisHelpersMixin:
         
         return alignment
 
-    def _perform_mtf_alignment_analysis(self, htf_df, ttf_df, ltf_df):
+    def _perform_mtf_alignment_analysis(self, htf_df, ttf_df, ltf_df, pair, htf_tf, ttf_tf, ltf_tf):
         """Actual MTF alignment analysis implementation"""
         # Perform all alignment analyses
-        trend_alignment = self._check_trend_alignment(htf_df, ttf_df, ltf_df)
+        trend_alignment = self._check_trend_alignment(htf_df, ttf_df, ltf_df)# This function does not call get_or_compute_states
         swing_alignment = self._check_swing_alignment(htf_df, ttf_df, ltf_df)
         pullback_sync = self._check_pullback_synchronization(htf_df, ttf_df, ltf_df)
         structure_strength = self._analyze_structure_strength(htf_df, ttf_df, ltf_df)
-        momentum_alignment = self._check_momentum_alignment(htf_df, ttf_df, ltf_df)
+        momentum_alignment = self._check_momentum_alignment(htf_df, ttf_df, ltf_df, pair, htf_tf, ttf_tf, ltf_tf)
         volume_confirmation = self._check_volume_confirmation(htf_df, ttf_df, ltf_df)
         
         # Calculate overall scores
@@ -309,17 +310,21 @@ class AnalysisHelpersMixin:
         
         return max(0.0, 1.0 - cv)
 
-    def _check_momentum_alignment(self, htf_df, ttf_df, ltf_df):
+    def _check_momentum_alignment(self, htf_df, ttf_df, ltf_df, pair, htf_tf, ttf_tf, ltf_tf):
         """Check momentum alignment across timeframes"""
         momentum_indicators = ['rsi', 'macd', 'stoch_k', 'momentum_continuation']
         
         alignment_score = 0
         total_checks = 0
+
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
         
         for indicator in momentum_indicators:
-            htf_states = self.get_or_compute_states(htf_df, indicator) if indicator in htf_df.columns else None
-            ttf_states = self.get_or_compute_states(ttf_df, indicator) if indicator in ttf_df.columns else None
-            ltf_states = self.get_or_compute_states(ltf_df, indicator) if indicator in ltf_df.columns else None
+            htf_states = self.get_or_compute_states(htf_df, indicator, htf_pair_tf) if indicator in htf_df.columns else None
+            ttf_states = self.get_or_compute_states(ttf_df, indicator, ttf_pair_tf) if indicator in ttf_df.columns else None
+            ltf_states = self.get_or_compute_states(ltf_df, indicator, ltf_pair_tf) if indicator in ltf_df.columns else None
             
             if all(states is not None for states in [htf_states, ttf_states, ltf_states]):
                 recent_htf = htf_states.iloc[-1]
@@ -1261,21 +1266,25 @@ class AnalysisHelpersMixin:
             'ltf': strategy_config['core_signals']['ltf'],
         }
 
-    def _create_adaptive_signal_mask(self, adaptive_signals, htf_df, ttf_df, ltf_df, direction):
+    def _create_adaptive_signal_mask(self, adaptive_signals, htf_df, ttf_df, ltf_df, direction, pair, htf_tf, ttf_tf, ltf_tf):
         """Helper for Mode K: Creates the signal mask."""
         active_mask = pd.Series(True, index=ltf_df.index)
         direction_str = 'bullish' if direction == 'bullish' else 'bearish'
 
         for tf, signals in adaptive_signals.items():
             df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+            current_pair_tf = f"{pair}_{htf_tf}" if tf == 'htf' else (f"{pair}_{ttf_tf}" if tf == 'ttf' else f"{pair}_{ltf_tf}")
             for sig in signals:
                 if sig in df.columns:
-                    states = self.get_or_compute_states(df, sig)
+                    states = self.get_or_compute_states(df, sig, current_pair_tf)
                     if states is not None:
                         active_mask &= (states == direction_str)
         return active_mask
     def _extract_strategy_returns(self, strategy):
             """Extract historical returns for a strategy"""
+            # This function only works for single-signal strategies
+            if strategy.get('type') != 'single_signal':
+                return None
             pair_tf = strategy['pair_tf']
             signal_name = strategy['signal_name']
             direction = strategy['direction']

@@ -77,20 +77,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 avg_accuracy = sum(accuracies) / len(accuracies)
                 print(f"   {strategy_class}: {avg_accuracy:.2%} ({len(accuracies)} strategies)")
 
-    def discover_mtf_strategies_mode_a(self, group_name, pair="BTC_USDT"):
+    def discover_mtf_strategies_mode_a(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode A (Corrected): Strict hierarchical MTF cascade (HTF & TTF & LTF)
+        Mode A (Refactored): Strict hierarchical MTF cascade (HTF & TTF & LTF)
         Corrected for lookahead bias.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode A strategies for {group_name} (HTF & TTF & LTF cascade)...")
 
-        # --- Retrieve group timeframes ---
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf, ttf_tf, ltf_tf = group_config["HTF"], group_config["TTF"], group_config["LTF"]
-
-        # --- Load dataframes ---
-        # Uses the OLD alignment function, which is fine for this simple logic
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
 
@@ -109,21 +103,22 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         ltf_all = self.categorize_columns(ltf_df)
         ltf_signals = (ltf_all['indicators'] + ltf_all['candlestick_patterns'] + ltf_all['chart_patterns'])[:max_inds]
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         # Use the combined lists for the loops
         for htf_ind in htf_signals:
-            htf_states = self.get_or_compute_states(htf_df, htf_ind)
+            htf_states = self.get_or_compute_states(htf_df, htf_ind, htf_pair_tf)
             if htf_states is None: continue
 
             for ttf_ind in ttf_signals:
-                ttf_states = self.get_or_compute_states(ttf_df, ttf_ind)
+                ttf_states = self.get_or_compute_states(ttf_df, ttf_ind, ttf_pair_tf)
                 if ttf_states is None: continue
 
                 for ltf_ind in ltf_signals:
-                    ltf_states = self.get_or_compute_states(ltf_df, ltf_ind)
+                    ltf_states = self.get_or_compute_states(ltf_df, ltf_ind, ltf_pair_tf)
                     if ltf_states is None: continue
-
-                    # === Correct Point-in-Time Logic ===
-                    # All states are already aligned to the LTF index by get_mtf_dataframes
                     
                     # Bullish: HTF AND TTF AND LTF must all be bullish
                     bullish_mask = (htf_states == 'bullish') & (ttf_states == 'bullish') & (ltf_states == 'bullish')
@@ -180,17 +175,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         return strategies
 
 
-    def discover_mtf_strategies_mode_b(self, group_name, pair="BTC_USDT"):
+    def discover_mtf_strategies_mode_b(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
         Mode B (Corrected): Flexible MTF Confluence (2-of-3)
         Corrected for lookahead bias.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode B strategies for {group_name} (2-of-3 confluence)...")
 
-        group_cfg = TIMEFRAME_GROUPS[group_name]
-        htf_tf, ttf_tf, ltf_tf = group_cfg["HTF"], group_cfg["TTF"], group_cfg["LTF"]
-
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if any(df is None for df in (htf_df, ttf_df, ltf_df)):
             return []
 
@@ -207,17 +199,21 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         ltf_all = self.categorize_columns(ltf_df)
         ltf_signals = (ltf_all['indicators'] + ltf_all['candlestick_patterns'] + ltf_all['chart_patterns'])[:max_inds]
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         # Use the combined lists for the loops
         for htf_ind in htf_signals:
-            htf_states = self.get_or_compute_states(htf_df, htf_ind)
+            htf_states = self.get_or_compute_states(htf_df, htf_ind, htf_pair_tf)
             if htf_states is None: continue
 
             for ttf_ind in ttf_signals:
-                ttf_states = self.get_or_compute_states(ttf_df, ttf_ind)
+                ttf_states = self.get_or_compute_states(ttf_df, ttf_ind, ttf_pair_tf)
                 if ttf_states is None: continue
 
                 for ltf_ind in ltf_signals:
-                    ltf_states = self.get_or_compute_states(ltf_df, ltf_ind)
+                    ltf_states = self.get_or_compute_states(ltf_df, ltf_ind, ltf_pair_tf)
                     if ltf_states is None: continue
 
                     # === Correct Point-in-Time Logic ===
@@ -284,17 +280,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                                 })
         return strategies
 
-    def discover_mtf_strategies_mode_c(self, group_name, pair="BTC_USDT"):
+    def discover_mtf_strategies_mode_c(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode C (Corrected): Weighted MTF Scoring
+        Mode C (Refactored): Weighted MTF Scoring
         Corrected for lookahead bias.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode C strategies for {group_name} (weighted cascade)...")
 
-        cfg = TIMEFRAME_GROUPS[group_name]
-        htf_tf, ttf_tf, ltf_tf = cfg["HTF"], cfg["TTF"], cfg["LTF"]
-
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if any(df is None for df in (htf_df, ttf_df, ltf_df)):
             return []
 
@@ -315,17 +308,21 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         ltf_all = self.categorize_columns(ltf_df)
         ltf_signals = (ltf_all['indicators'] + ltf_all['candlestick_patterns'] + ltf_all['chart_patterns'])[:max_inds]
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         # Use the combined lists for the loops
         for htf_ind in htf_signals:
-            htf_states = self.get_or_compute_states(htf_df, htf_ind)
+            htf_states = self.get_or_compute_states(htf_df, htf_ind, htf_pair_tf)
             if htf_states is None: continue
 
             for ttf_ind in ttf_signals:
-                ttf_states = self.get_or_compute_states(ttf_df, ttf_ind)
+                ttf_states = self.get_or_compute_states(ttf_df, ttf_ind, ttf_pair_tf)
                 if ttf_states is None: continue
 
                 for ltf_ind in ltf_signals:
-                    ltf_states = self.get_or_compute_states(ltf_df, ltf_ind)
+                    ltf_states = self.get_or_compute_states(ltf_df, ltf_ind, ltf_pair_tf)
                     if ltf_states is None: continue
 
                     # === Correct Point-in-Time Logic ===
@@ -378,19 +375,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                                 })
         return strategies
 
-    def discover_mtf_strategies_mode_d(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_d(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode D: Pure Price Action MTF Strategy
+        Mode D(Refactored): Pure Price Action MTF Strategy
         Uses only swing points, pullbacks, and market structure - NO traditional indicators
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode D (Price Action) strategies for {group_name}...")
         
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if htf_df is None:
             return []
         
@@ -423,6 +415,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             }
         }
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         for setup_name, signals in price_action_signals.items():
             direction = 'bullish' if 'bullish' in setup_name else 'bearish'
             
@@ -430,17 +426,17 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             htf_states = {}
             for sig in signals['htf']:
                 if sig in htf_df.columns:
-                    htf_states[sig] = self.get_or_compute_states(htf_df, sig)
+                    htf_states[sig] = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
             
             ttf_states = {}
             for sig in signals['ttf']:
                 if sig in ttf_df.columns:
-                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig)
+                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
                     
             ltf_states = {}
             for sig in signals['ltf']:
                 if sig in ltf_df.columns:
-                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig)
+                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
             
             # Create combined mask (all signals must align)
             if htf_states and ttf_states and ltf_states:
@@ -499,19 +495,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_e(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_e(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode E: Hybrid Price Action + Indicator Strategy
+        Mode E(Refactored): Hybrid Price Action + Indicator Strategy
         Combines the best of price structure with traditional indicators
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode E (Hybrid) strategies for {group_name}...")
         
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if htf_df is None:
             return []
         
@@ -560,6 +551,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             }
         }
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         for setup_name, setup_config in hybrid_setups.items():
             direction = 'bullish' if 'bull' in setup_name else 'bearish'
             
@@ -568,10 +563,12 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             
             for tf, signals in setup_config['price_action'].items():
                 df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+
+                current_pair_tf = htf_pair_tf if tf == 'htf' else (ttf_pair_tf if tf == 'ttf' else ltf_pair_tf)
                 
                 for sig in signals:
                     if sig in df.columns:
-                        states = self.get_or_compute_states(df, sig)
+                        states = self.get_or_compute_states(df, sig, current_pair_tf)
                         if states is not None:
                             if direction == 'bullish':
                                 pa_mask &= (states == 'bullish')
@@ -583,10 +580,12 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             
             for tf, signals in setup_config['indicators'].items():
                 df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+
+                current_pair_tf = htf_pair_tf if tf == 'htf' else (ttf_pair_tf if tf == 'ttf' else ltf_pair_tf)
                 
                 for sig in signals:
                     if sig in df.columns:
-                        states = self.get_or_compute_states(df, sig)
+                        states = self.get_or_compute_states(df, sig, current_pair_tf)
                         if states is not None:
                             if direction == 'bullish':
                                 indicator_mask &= (states == 'bullish')
@@ -626,19 +625,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_f(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_f(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode F: Advanced Structure Breakout Strategy
+        Mode F(Refactored): Advanced Structure Breakout Strategy
         Focuses on structural breaks with volume and momentum confirmation
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode F (Structure Breakout) strategies for {group_name}...")
         
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if htf_df is None:
             return []
         
@@ -680,6 +674,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             }
         }
         
+
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         for setup_name, setup_config in advanced_setups.items():
             direction = 'bullish' if 'bull' in setup_name else 'bearish'
             
@@ -687,17 +686,17 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             htf_states = {}
             for sig in setup_config['htf']:
                 if sig in htf_df.columns:
-                    htf_states[sig] = self.get_or_compute_states(htf_df, sig)
+                    htf_states[sig] = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
             
             ttf_states = {}
             for sig in setup_config['ttf']:
                 if sig in ttf_df.columns:
-                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig)
+                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
                     
             ltf_states = {}
             for sig in setup_config['ltf']:
                 if sig in ltf_df.columns:
-                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig)
+                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
             
             # Create advanced confluence mask
             if htf_states and ttf_states and ltf_states:
@@ -759,19 +758,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_g(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_g(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode G: Momentum & Divergence Strategy
-        Focuses on momentum shifts and divergence patterns across timeframes
+        Mode G(Refactored): Momentum & Divergence Strategy
+        Focuses on momentum shifts and divergence patterns across timeframes.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode G (Momentum Divergence) strategies for {group_name}...")
-        
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+
         if htf_df is None:
             return []
         
@@ -812,7 +806,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'ltf': ['structure_break_bearish', 'higher_highs_lower_lows']
             }
         }
-        
+
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         for setup_name, setup_config in momentum_setups.items():
             direction = 'bullish' if 'bull' in setup_name else 'bearish'
             
@@ -820,17 +818,17 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             htf_states = {}
             for sig in setup_config['htf']:
                 if sig in htf_df.columns:
-                    htf_states[sig] = self.get_or_compute_states(htf_df, sig)
+                    htf_states[sig] = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
             
             ttf_states = {}
             for sig in setup_config['ttf']:
                 if sig in ttf_df.columns:
-                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig)
+                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
                     
             ltf_states = {}
             for sig in setup_config['ltf']:
                 if sig in ltf_df.columns:
-                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig)
+                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
             
             # Create momentum confluence mask
             if htf_states and ttf_states and ltf_states:
@@ -900,19 +898,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         return strategies
 
 
-    def discover_mtf_strategies_mode_h(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_h(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode H: Trend-Context Strategy
+        Mode H (Refactored): Trend-Context Strategy
         Uses comprehensive trend analysis to filter high-probability setups
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode H (Trend-Context) strategies for {group_name}...")
         
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if htf_df is None:
             return []
         
@@ -968,6 +961,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 }
             }
         }
+
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
         
         current_trend = trend_analysis['overall_trend']['primary_trend']
         
@@ -981,17 +978,17 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             htf_states = {}
             for sig in setup_config['signals']['htf']:
                 if sig in htf_df.columns:
-                    htf_states[sig] = self.get_or_compute_states(htf_df, sig)
+                    htf_states[sig] = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
             
             ttf_states = {}
             for sig in setup_config['signals']['ttf']:
                 if sig in ttf_df.columns:
-                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig)
+                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
                     
             ltf_states = {}
             for sig in setup_config['signals']['ltf']:
                 if sig in ltf_df.columns:
-                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig)
+                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
             
             # Create trend-context mask
             if htf_states and ttf_states and ltf_states:
@@ -1059,19 +1056,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_i(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_i(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode I: High-Quality Pullback Strategy
+        Mode I (Refactored): High-Quality Pullback Strategy
         Focuses exclusively on high-scoring pullback setups with trend confirmation
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode I (High-Quality Pullback) strategies for {group_name}...")
         
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
         if htf_df is None:
             return []
         
@@ -1104,6 +1096,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             }
         }
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         current_trend = trend_analysis['overall_trend']['primary_trend']
         
         for setup_name, setup_config in hq_pullback_setups.items():
@@ -1122,17 +1118,17 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             htf_states = {}
             for sig in setup_config['confirmation_signals']['htf']:
                 if sig in htf_df.columns:
-                    htf_states[sig] = self.get_or_compute_states(htf_df, sig)
+                    htf_states[sig] = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
             
             ttf_states = {}
             for sig in setup_config['confirmation_signals']['ttf']:
                 if sig in ttf_df.columns:
-                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig)
+                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
                     
             ltf_states = {}
             for sig in setup_config['confirmation_signals']['ltf']:
                 if sig in ltf_df.columns:
-                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig)
+                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
             
             # Create high-quality pullback mask
             if htf_states and ttf_states and ltf_states:
@@ -1194,23 +1190,18 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_j(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_j(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode J (REWRITTEN): Regime-Optimized Strategy Discovery
+        Mode J (Refactored): Regime-Optimized Strategy Discovery
         
         This version is fixed to use a 'historical_regime' column,
         testing strategies *only* on the bars where their compatible
         regime was active.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode J (Regime-Optimized) strategies for {group_name}...")
         
         try:
-            group_config = TIMEFRAME_GROUPS[group_name]
-            htf_tf = group_config["HTF"]
-            ttf_tf = group_config["TTF"]
-            ltf_tf = group_config["LTF"]
-            
-            htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
             if htf_df is None:
                 return []
             
@@ -1265,7 +1256,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     }
                 }
             }
-            
+        
             for strategy_name, strategy_config in regime_strategies.items():
                 for direction in ['bullish', 'bearish']:
                     
@@ -1275,9 +1266,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
 
                     for tf, signals in strategy_config['signals'].items():
                         df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                        current_pair_tf = f"{pair}_{htf_tf}" if tf == 'htf' else (f"{pair}_{ttf_tf}" if tf == 'ttf' else f"{pair}_{ltf_tf}")
                         for sig in signals:
                             if sig in df.columns:
-                                states = self.get_or_compute_states(df, sig)
+                                states = self.get_or_compute_states(df, sig, current_pair_tf)
                                 if states is not None:
                                     signal_mask &= (states == direction_str)
                     
@@ -1333,19 +1325,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             print(f"❌ [discover_mtf_strategies_mode_j] TRACEBACK: {traceback.format_exc()}")
             return []
 
-    def discover_mtf_strategies_mode_k(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_k(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode K: Adaptive Multi-Regime Strategy Discovery
+        Mode K (Refactored): Adaptive Multi-Regime Strategy Discovery
         Discovers strategies that work across multiple regimes with adaptive parameters
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode K (Adaptive Multi-Regime) strategies for {group_name}...")
-        
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+
         if htf_df is None:
             return []
         
@@ -1417,7 +1404,8 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     
                     # Create adaptive mask
                     adaptive_mask = self._create_adaptive_signal_mask(
-                        adaptive_signals, htf_df, ttf_df, ltf_df, direction
+                        adaptive_signals, htf_df, ttf_df, ltf_df, direction, 
+                        pair, htf_tf, ttf_tf, ltf_tf
                     )
                     
                     if adaptive_mask.sum() > 6:
@@ -1458,26 +1446,23 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_l(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_l(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode L: Advanced Structure-Aligned Strategy Discovery
-        Uses comprehensive MTF structure alignment for high-confidence setups
+        Mode L (Refactored): Advanced Structure-Aligned Strategy Discovery
+        Uses comprehensive MTF structure alignment for high-confidence setups.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode L (Structure-Aligned) strategies for {group_name}...")
-        
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+
         if htf_df is None:
             return []
         
         strategies = []
         
         # Get comprehensive structure alignment analysis
-        structure_alignment = self.analyze_mtf_structure_alignment(htf_df, ttf_df, ltf_df)
+        structure_alignment = self.get_mtf_structure_alignment(
+            htf_df, ttf_df, ltf_df, pair, htf_tf, ttf_tf, ltf_tf
+            )
         
         # Only proceed with good or excellent alignment
         if structure_alignment['alignment_quality'] in ['poor', 'fair']:
@@ -1522,10 +1507,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     
                     for tf, signals in setup['signals'].items():
                         df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                        current_pair_tf = f"{pair}_{htf_tf}" if tf == 'htf' else (f"{pair}_{ttf_tf}" if tf == 'ttf' else f"{pair}_{ltf_tf}")
                         
                         for signal in signals:
                             if signal in df.columns:
-                                states = self.get_or_compute_states(df, signal)
+                                states = self.get_or_compute_states(df, signal, current_pair_tf)
                                 if states is not None:
                                     if direction == 'bullish':
                                         signal_mask &= (states == 'bullish')
@@ -1565,19 +1551,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_m(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_m(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode M: Volatility-Adaptive MTF Strategies
-        Combines volatility regimes with MTF structure for adaptive strategy selection
+        Mode M (Refactored): Volatility-Adaptive MTF Strategies
+        Combines volatility regimes with MTF structure for adaptive strategy selection.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         print(f"  Discovering Mode M (Volatility-Adaptive) strategies for {group_name}...")
-        
-        group_config = TIMEFRAME_GROUPS[group_name]
-        htf_tf = group_config["HTF"]
-        ttf_tf = group_config["TTF"]
-        ltf_tf = group_config["LTF"]
-        
-        htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+
         if htf_df is None:
             return []
         
@@ -1672,6 +1653,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             }
         }
         
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+
         # Use LTF volatility for primary strategy selection
         current_vol_regime = ltf_volatility['volatility_regime']
         
@@ -1685,10 +1670,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 
                 for tf, signals in strategy_config['signals'].items():
                     df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                    current_pair_tf = htf_pair_tf if tf == 'htf' else (ttf_pair_tf if tf == 'ttf' else ltf_pair_tf)
                     
                     for signal in signals:
                         if signal in df.columns:
-                            states = self.get_or_compute_states(df, signal)
+                            states = self.get_or_compute_states(df, signal, current_pair_tf)
                             if states is not None:
                                 if direction == 'bullish':
                                     vol_mask &= (states == 'bullish')
@@ -1737,19 +1723,14 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_n(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_n(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
             """
             Mode N: Momentum Cascade Strategies
-            Momentum that flows from HTF → TTF → LTF with confirmation
+            Momentum that flows from HTF → TTF → LTF with confirmation.
+            Receives dataframes as arguments to prevent redundant loads.
             """
             print(f"  Discovering Mode N (Momentum Cascade) strategies for {group_name}...")
-            
-            group_config = TIMEFRAME_GROUPS[group_name]
-            htf_tf = group_config["HTF"]
-            ttf_tf = group_config["TTF"]
-            ltf_tf = group_config["LTF"]
-            
-            htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+      
             if htf_df is None:
                 return []
             
@@ -1792,6 +1773,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 },
             }
             
+            htf_pair_tf = f"{pair}_{htf_tf}"
+            ttf_pair_tf = f"{pair}_{ttf_tf}"
+            ltf_pair_tf = f"{pair}_{ltf_tf}"
+
             current_flow = momentum_cascade['primary_flow_direction']
             current_strength = momentum_cascade['momentum_strength']
             
@@ -1825,10 +1810,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 
                 for tf, signals in pattern_config['signals'].items():
                     df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                    current_pair_tf = htf_pair_tf if tf == 'htf' else (ttf_pair_tf if tf == 'ttf' else ltf_pair_tf)
                     
                     for signal in signals:
                         if signal in df.columns:
-                            states = self.get_or_compute_states(df, signal)
+                            states = self.get_or_compute_states(df, signal, current_pair_tf)
                             if states is not None:
                                 if direction == 'bullish':
                                     cascade_mask &= (states == 'bullish')
@@ -1869,15 +1855,16 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             
             return strategies
     
-    def discover_mtf_strategies_mode_confluence(self, group_name, pair="btc_usdt"):
+    def discover_mtf_strategies_mode_confluence(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode Confluence (REWRITTEN):
+        Mode Confluence (Refactored):
         
         Finds combinations where Price Action and Indicators align,
         using flexible "N-of-M" (e.g., 60%) confluence logic
         instead of the original strict "all-or-nothing" approach.
         
         Also uses historical regime filtering.
+        Receives dataframes as arguments to prevent redundant loads.
         """
         try:
             print(f"  Discovering Mode Confluence (Flexible) strategies for {group_name}...")
@@ -1948,16 +1935,18 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 pa_states = []
                 for tf, signals in pattern['price_action'].items():
                     df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                    current_pair_tf = f"{pair}_{htf_tf}" if tf == 'htf' else (f"{pair}_{ttf_tf}" if tf == 'ttf' else f"{pair}_{ltf_tf}")
                     for signal in signals:
                         if signal in df.columns:
-                            pa_states.append(self.get_or_compute_states(df, signal))
+                            pa_states.append(self.get_or_compute_states(df, signal, current_pair_tf))
 
                 indicator_states = []
                 for tf, signals in pattern['indicators'].items():
                     df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                    current_pair_tf = f"{pair}_{htf_tf}" if tf == 'htf' else (f"{pair}_{ttf_tf}" if tf == 'ttf' else f"{pair}_{ltf_tf}")
                     for signal in signals:
                         if signal in df.columns:
-                            indicator_states.append(self.get_or_compute_states(df, signal))
+                            indicator_states.append(self.get_or_compute_states(df, signal, current_pair_tf))
 
                 # 2. Convert states to boolean masks for the correct direction
                 pa_masks = [(s == direction_str) for s in pa_states if s is not None]
@@ -2065,6 +2054,8 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         sorted_groups = sorted(TIMEFRAME_GROUPS.keys(), key=get_group_order)
         
         print(f"Analysis order: {' -> '.join(sorted_groups)}")
+
+        pair = "btc_usdt" # Define the pair once for the entire run
         
         for group_name in sorted_groups:
             print(f"\nAnalyzing {group_name}.")
@@ -2086,29 +2077,16 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             try:
                 # many existing helper names exist in the file: try the enhanced getter first,
                 # then fall back to simpler getter patterns used elsewhere.
-                if hasattr(self, "get_mtf_dataframes"):
-                    htf_df, ttf_df, ltf_df = self.get_mtf_dataframes("btc_usdt", htf_tf, ttf_tf, ltf_tf)
-                elif hasattr(self, "get_mtf_dataframes"):
-                    htf_df, ttf_df, ltf_df = self.get_mtf_dataframes("btc_usdt", htf_tf, ttf_tf, ltf_tf)
-                else:
-                    # Last-resort: try direct keys in all_dataframes (safe lookup)
-                    htf_key = f"btc_usdt_{htf_tf}" if htf_tf else None
-                    ttf_key = f"btc_usdt_{ttf_tf}" if ttf_tf else None
-                    ltf_key = f"btc_usdt_{ltf_tf}" if ltf_tf else None
-                    htf_df = self.all_dataframes.get(htf_key) if htf_key else None
-                    ttf_df = self.all_dataframes.get(ttf_key) if ttf_key else None
-                    ltf_df = self.all_dataframes.get(ltf_key) if ltf_key else None
+                htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+
+                if htf_df is None or ttf_df is None or ltf_df is None:
+                    print(f"  ⚠️  Skipping {group_name}: Could not load all dataframes.")
+                    continue
+
             except Exception:
                 htf_df = ttf_df = ltf_df = None
-
-            # store in a small per-group cache so the different discovery modes can use the
-            # already-computed HTF/TTF/LTF analysis (prevents re-ordering issues)
-            if not hasattr(self, "_mtf_cache"):
-                self._mtf_cache = {}
-            self._mtf_cache[group_name] = {
-                "htf_tf": htf_tf, "ttf_tf": ttf_tf, "ltf_tf": ltf_tf,
-                "htf_df": htf_df, "ttf_df": ttf_df, "ltf_df": ltf_df
-            }
+                print(f"  ⚠️  Skipping {group_name}: Error during dataframe loading.")
+                continue
 
             # run discovery modes sequentially (HTF-first is guaranteed because htf_df computed above)
             # NOTE: we call modes one-by-one rather than in parallel to ensure order and reproducibility
@@ -2126,17 +2104,18 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 ('J', self.discover_mtf_strategies_mode_j),
                 ('K', self.discover_mtf_strategies_mode_k),
                 ('L', self.discover_mtf_strategies_mode_l),
-                ('M', getattr(self, 'discover_mtf_strategies_mode_m', lambda g: [])),
-                ('N', getattr(self, 'discover_mtf_strategies_mode_n', lambda g: [])),
+                ('M', getattr(self, 'discover_mtf_strategies_mode_m', lambda *args: [])),
+                ('N', getattr(self, 'discover_mtf_strategies_mode_n', lambda *args: [])),
                 ('Confluence', self.discover_mtf_strategies_mode_confluence)
             ]:
                 try:
                     # Each mode may internally fetch dataframes again; but because we cached the
                     # computed HTF/TTF/LTF above, modes can (optionally) reuse those to guarantee HTF-first logic.
-                    res = mode_fn(group_name)
+                    res = mode_fn(group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf)
                     strategy_results[mode_label] = res if res is not None else []
                 except Exception as e:
                     print(f"  ! Mode {mode_label} failed for {group_name}: {e}")
+                    #print(f"  ! Mode {mode_label} failed for {group_name}: {e}\n{traceback.format_exc()}") # Added full traceback
                     strategy_results[mode_label] = []
 
             # Combine all results

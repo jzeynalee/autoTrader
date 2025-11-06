@@ -75,6 +75,7 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         self.swing_cache = {}
         self.pattern_cache = {}
         self.alignment_cache = {}
+        self.aligned_df_cache = {}
         self.state_cache = {}
         self.max_cache_size = 1000
             
@@ -108,11 +109,17 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         """
         Enhanced version with price structure synchronization
         FIXED: Now uses lowercase keys to match loaded data.
+        FIXED: Caches aligned dataframes to prevent re-computation in backtesting.
         """
-        # --- START OF FIX ---
+        pair_lower = pair.lower()
+        cache_key = f"{pair_lower}_{htf_tf}_{ttf_tf}_{ltf_tf}"
+        if cache_key in self.aligned_df_cache:
+            self.cache_hits += 1
+            return self.aligned_df_cache[cache_key]
+        self.cache_misses += 1
+
         # Keys are loaded as lowercase (e.g., 'btc_usdt_4h')
         # The 'pair' argument must also be lowercase.
-        pair_lower = pair.lower()
         htf_key = f"{pair_lower}_{htf_tf}"
         ttf_key = f"{pair_lower}_{ttf_tf}" 
         ltf_key = f"{pair_lower}_{ltf_tf}"
@@ -135,8 +142,10 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         htf_df = self.identify_price_states(htf_df)
         ttf_df = self.identify_price_states(ttf_df) 
         ltf_df = self.identify_price_states(ltf_df)
-        
-        return self.align_mtf_with_price_structure(htf_df, ttf_df, ltf_df)
+                
+        aligned_dfs = self.align_mtf_with_price_structure(htf_df, ttf_df, ltf_df)
+        self.aligned_df_cache[cache_key] = aligned_dfs  # Store in cache
+        return aligned_dfs
 
     def optimize_data_loading(self):
         print("Optimizing memory usage...")
@@ -543,4 +552,3 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
                 print(f"  Bearish: {p['bearish_accuracy']:.2%} ({p['bearish_count']} times)")
         
         return pattern_effectiveness
-
