@@ -386,6 +386,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+
         strategies = []
         
         # Define price action signal combinations
@@ -506,6 +511,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+
         strategies = []
         
         # Define hybrid signal combinations (price action + indicators)
@@ -909,6 +919,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        
         strategies = []
         
         # Get comprehensive trend analysis
@@ -1067,6 +1082,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+
         strategies = []
         
         # Get trend analysis for context
@@ -1205,19 +1225,16 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             if htf_df is None:
                 return []
             
-            # --- CRITICAL FIX ---
-            # This function requires that your AdvancedRegimeDetectionSystem
-            # has added a *historical* regime column to your dataframes.
-            # The original code used the *current* regime for the *entire* backtest.
+            htf_df = self.detect_advanced_price_patterns(htf_df)
+            ttf_df = self.detect_advanced_price_patterns(ttf_df)
+            ltf_df = self.detect_advanced_price_patterns(ltf_df)
+            
             if 'historical_regime' not in ltf_df.columns:
                 print(f"  ⚠️  Mode J SKIPPED: 'historical_regime' column not found in LFT dataframe.")
-                print(f"     Please update 'AdvancedRegimeDetectionSystem' to add this column.")
                 return []
-            # --- END FIX ---
-
+            
             strategies = []
             
-            # (Regime strategy templates can be expanded)
             regime_strategies = {
                 'trend_following_momentum': {
                     'compatible_regimes': ['strong_trend_high_vol', 'strong_trend_normal_vol', 'weak_trend'],
@@ -1336,12 +1353,12 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
-        strategies = []
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
         
-        # Get regime analysis
-        htf_regime = self.regime_detector.detect_advanced_market_regimes(htf_df)
-        ttf_regime = self.regime_detector.detect_advanced_market_regimes(ttf_df)
-        ltf_regime = self.regime_detector.detect_advanced_market_regimes(ltf_df)
+        strategies = []
         
         # Multi-regime strategy configurations
         multi_regime_strategies = {
@@ -1393,7 +1410,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         for strategy_name, strategy_config in multi_regime_strategies.items():
             # Test across different regime contexts
-            regime_contexts = self._identify_regime_contexts(htf_regime, ttf_regime, ltf_regime)
+            regime_contexts = self._identify_regime_contexts(htf_df, ttf_df, ltf_df)
             
             for regime_context in regime_contexts:
                 for direction in ['bullish', 'bearish']:
@@ -1457,6 +1474,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+
         strategies = []
         
         # Get comprehensive structure alignment analysis
@@ -1562,6 +1584,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         if htf_df is None:
             return []
         
+        # Enhance dataframes with advanced patterns
+        htf_df = self.detect_advanced_price_patterns(htf_df)
+        ttf_df = self.detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+
         strategies = []
         
         # Get volatility regime analysis for all timeframes
@@ -1869,14 +1896,15 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         try:
             print(f"  Discovering Mode Confluence (Flexible) strategies for {group_name}...")
                 
-            group_config = TIMEFRAME_GROUPS[group_name]
-            htf_tf = group_config["HTF"]
-            ttf_tf = group_config["TTF"]
-            ltf_tf = group_config["LTF"]
-            
-            htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
+            # --- START OF FIX (Q4) ---
+            # Remove redundant call to get_mtf_dataframes.
+            # The DFs are already passed in as arguments.
             if htf_df is None:
-                return []
+                return []            
+            
+            htf_df = self.detect_advanced_price_patterns(htf_df)
+            ttf_df = self.detect_advanced_price_patterns(ttf_df)
+            ltf_df = self.detect_advanced_price_patterns(ltf_df)
             
             # --- CRITICAL FIX (Same as Mode J) ---
             if 'historical_regime' not in ltf_df.columns:

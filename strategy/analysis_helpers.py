@@ -1293,7 +1293,7 @@ class AnalysisHelpersMixin:
             
             df = self.all_dataframes[pair_tf].copy()
             df = self.identify_price_states(df)
-            signal_states = self.get_or_compute_states(df, signal_name)
+            signal_states = self.get_or_compute_states(df, signal_name, pair_tf=pair_tf)
             
             if signal_states is None:
                 return None

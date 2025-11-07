@@ -188,7 +188,7 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             return self.state_cache[cache_key]
         
         self.cache_misses += 1
-        states = map_indicator_state(df, column_name)
+        states = map_indicator_state(df, column_name, pair_tf=pair_tf)
 
         if use_cache and states is not None:
             if self.use_categorical_encoding:
@@ -500,7 +500,7 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             all_patterns = categories['candlestick_patterns'] + categories['chart_patterns']
             
             for pattern in all_patterns:
-                pattern_states = map_indicator_state(df, pattern)
+                pattern_states = map_indicator_state(df, pattern, pair_tf=pair_tf) # Pass pair_tf
                 if pattern_states is None: continue
                 
                 pattern_values = pattern_states.values

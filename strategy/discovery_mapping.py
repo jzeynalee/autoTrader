@@ -71,18 +71,35 @@ TIMEFRAME_GROUPS = {
 
 TIMEFRAME_HIERARCHY = {'1m': 1, '5m': 5, '15m': 15, '1h': 60, '4h': 240}
 
+TIMEFRAME_FILL_LIMITS = {
+    '4h': 4,  # A 4h event state should cover its four 1h bars
+    '1h': 4,  # A 1h event state should cover its four 15m bars
+    '15m': 3, # A 15m event state should cover its three 5m bars
+    '5m': 5,  # A 5m event state should cover its five 1m bars
+    '1m': 1   # A 1m event is just 1 bar (no ffill needed)
+}
+
 def validate_timeframe_group(htf, ttf, ltf):
     htf_rank = TIMEFRAME_HIERARCHY.get(htf, 0)
     ttf_rank = TIMEFRAME_HIERARCHY.get(ttf, 0) 
     ltf_rank = TIMEFRAME_HIERARCHY.get(ltf, 0)
     return htf_rank > ttf_rank > ltf_rank > 0
 
-def map_indicator_state(df, indicator_name):
+def map_indicator_state(df, indicator_name, pair_tf=None):
     """
     COMPLETE mapping for ALL 101+ indicators from calculator.py
     """
     if indicator_name not in df.columns:
         return None
+
+    fill_limit = 5  # Default fallback
+    if pair_tf:
+        try:
+            tf = pair_tf.split('_')[-1]
+            if tf in TIMEFRAME_FILL_LIMITS:
+                fill_limit = TIMEFRAME_FILL_LIMITS[tf]
+        except Exception:
+            pass # Keep default
     
     values = df[indicator_name]
     states = pd.Series("neutral", index=df.index)
@@ -533,32 +550,43 @@ def map_indicator_state(df, indicator_name):
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
     
+    # --- EVENT-BASED MAPPING (Refactored to forward-fill) ---
+    # These signals are now "sticky" for 5 bars
     elif indicator_name == "equal_highs_lows":
-        states[values == 1] = "bearish"  # Equal highs = resistance
-        states[values == -1] = "bullish"  # Equal lows = support
+        states[values == 1] = "bearish"
+        states[values == -1] = "bullish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "swing_failure":
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "structure_break_bullish":
         states[values == 1] = "bullish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "structure_break_bearish":
         states[values == 1] = "bearish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "false_breakout_bullish":
         states[values == 1] = "bullish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "false_breakout_bearish":
         states[values == 1] = "bearish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "momentum_divergence_bullish":
         states[values == 1] = "bullish"
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
     
     elif indicator_name == "momentum_divergence_bearish":
         states[values == 1] = "bearish"
-    
+        states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
+     
+    # --- STATE-BASED MAPPING (remains the same) ---    
     elif indicator_name == "momentum_continuation":
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
@@ -853,7 +881,7 @@ def validate_all_indicators_mapped(df):
         if col in exclude_cols:
             continue
         
-        states = map_indicator_state(df, col)
+        states = map_indicator_state(df, col, pair_tf=f"DUMMY_{df.iloc[1]['timestamp'] - df.iloc[0]['timestamp'] }") # Pass dummy tf
         if states is None:
             unmapped.append(col)
         else:
