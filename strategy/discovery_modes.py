@@ -387,9 +387,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
 
         strategies = []
         
@@ -512,9 +512,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
 
         strategies = []
         
@@ -647,10 +647,39 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
+            
+        # ========== DEBUG: CHECK WHAT COLUMNS EXIST ==========
+        '''print(f"    [DEBUG Mode F] HTF columns: {list(htf_df.columns)}")
+        print(f"    [DEBUG Mode F] TTF columns: {list(ttf_df.columns)}")
+        print(f"    [DEBUG Mode F] LTF columns: {list(ltf_df.columns)}")'''
         
+        # Check for required pattern columns
+        required_patterns = [
+            'trend_structure', 'structure_break_bullish', 'structure_break_bearish',
+            'false_breakout_bullish', 'false_breakout_bearish', 
+            'momentum_continuation', 'volume_breakout_confirmation',
+            'higher_highs_lower_lows'
+        ]
+        
+        missing_patterns = []
+        for pattern in required_patterns:
+            if pattern not in htf_df.columns:
+                missing_patterns.append(f"HTF:{pattern}")
+            if pattern not in ttf_df.columns:
+                missing_patterns.append(f"TTF:{pattern}")
+            if pattern not in ltf_df.columns:
+                missing_patterns.append(f"LTF:{pattern}")
+        
+        if missing_patterns:
+            print(f"    [DEBUG Mode F] ❌ MISSING PATTERNS: {missing_patterns[:10]}")
+            print(f"    [DEBUG Mode F] Total missing: {len(missing_patterns)}")
+            return []  # Early return if patterns are missing
+        else:
+            print(f"    [DEBUG Mode F] ✅ All required patterns found!")
+
         strategies = []
         
         # Advanced breakout setups
@@ -780,9 +809,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
         
         strategies = []
         
@@ -920,9 +949,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
         
         strategies = []
         
@@ -1083,9 +1112,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
 
         strategies = []
         
@@ -1225,9 +1254,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             if htf_df is None:
                 return []
             
-            htf_df = self.detect_advanced_price_patterns(htf_df)
-            ttf_df = self.detect_advanced_price_patterns(ttf_df)
-            ltf_df = self.detect_advanced_price_patterns(ltf_df)
+            htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+            ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+            ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
             
             if 'historical_regime' not in ltf_df.columns:
                 print(f"  ⚠️  Mode J SKIPPED: 'historical_regime' column not found in LFT dataframe.")
@@ -1354,9 +1383,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
         
         strategies = []
         
@@ -1475,9 +1504,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
 
         strategies = []
         
@@ -1585,9 +1614,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return []
         
         # Enhance dataframes with advanced patterns
-        htf_df = self.detect_advanced_price_patterns(htf_df)
-        ttf_df = self.detect_advanced_price_patterns(ttf_df)
-        ltf_df = self.detect_advanced_price_patterns(ltf_df)
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
 
         strategies = []
         
@@ -1902,9 +1931,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             if htf_df is None:
                 return []            
             
-            htf_df = self.detect_advanced_price_patterns(htf_df)
-            ttf_df = self.detect_advanced_price_patterns(ttf_df)
-            ltf_df = self.detect_advanced_price_patterns(ltf_df)
+            htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+            ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+            ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
             
             # --- CRITICAL FIX (Same as Mode J) ---
             if 'historical_regime' not in ltf_df.columns:
