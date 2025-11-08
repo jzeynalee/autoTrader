@@ -72,6 +72,7 @@ class PatternsMixin:
     def vectorized_trend_structure_analysis(self, df):
         """
         Vectorized trend structure analysis using NumPy
+        FIXED: Safe array slicing with proper bounds checking
         """
         cache_key = f"trend_structure_{len(df)}_{df.index[-1]}"
         if cache_key in self.structure_cache:
@@ -83,7 +84,6 @@ class PatternsMixin:
         
         high_values = df['high'].values
         low_values = df['low'].values
-        close_values = df['close'].values
         n = len(df)
         
         # Initialize result arrays
@@ -92,55 +92,63 @@ class PatternsMixin:
         lower_highs = np.zeros(n, dtype=np.int8)
         lower_lows = np.zeros(n, dtype=np.int8)
         
-        # Vectorized HH/LL detection using rolling windows
-        for i in range(10, n):
-            # Look at last 5 bars for structure
-            window_start = max(0, i-5)
-            window_highs = high_values[window_start:i+1]
-            window_lows = low_values[window_start:i+1]
+        # Use reasonable lookback
+        lookback = 20
+        
+        # *** FIX: Safe iteration with proper bounds ***
+        for i in range(lookback * 2, n):  # Start from lookback*2 to ensure we have data
+            # Define safe slice boundaries
+            prev_start = max(0, i - lookback * 2)
+            prev_end = i - lookback
+            curr_start = i - lookback
+            curr_end = i + 1
             
-            # Higher Highs/Lower Lows detection
-            if len(window_highs) >= 3:
-                # Check if we have consecutive higher highs
-                high_increasing = (
-                    all(window_highs[j] > window_highs[j-1] for j in range(1, len(window_highs)))
-                    if len(window_highs) > 1
-                    else False
-                )
-                                
-                low_increasing = (
-                    all(window_lows[j] > window_lows[j-1] for j in range(1, len(window_lows)))
-                    if len(window_lows) > 1
-                    else False
-                )
-
-                if high_increasing and low_increasing:
-                    higher_highs[i] = 1
-                    higher_lows[i] = 1
+            # *** CRITICAL: Skip if prev window would be empty ***
+            if prev_end <= prev_start:
+                continue
             
-            # Lower Highs/Lower Lows detection
-            if len(window_highs) >= 3:
-                high_decreasing = (
-                    all(window_highs[j] < window_highs[j-1] for j in range(1, len(window_highs)))
-                    if len(window_highs) > 1 
-                    else False
-                    )
-                low_decreasing = (
-                    all(window_lows[j] < window_lows[j-1] for j in range(1, len(window_lows)))
-                    if len(window_lows) > 1 
-                    else False
-                    )
-                
-                if high_decreasing and low_decreasing:
-                    lower_highs[i] = 1
-                    lower_lows[i] = 1
+            # Get windows
+            prev_highs = high_values[prev_start:prev_end]
+            prev_lows = low_values[prev_start:prev_end]
+            curr_highs = high_values[curr_start:curr_end]
+            curr_lows = low_values[curr_start:curr_end]
+            
+            # *** SAFETY CHECK: Skip if any window is empty ***
+            if len(prev_highs) == 0 or len(curr_highs) == 0:
+                continue
+            
+            current_high = high_values[i]
+            current_low = low_values[i]
+            
+            # Higher Highs: Current high > max of current window AND > max of previous window
+            if current_high == np.max(curr_highs) and current_high > np.max(prev_highs):
+                higher_highs[i] = 1
+            
+            # Higher Lows: Current low is highest low in current window AND > highest low in previous window
+            curr_low_max = np.max(curr_lows)
+            prev_low_max = np.max(prev_lows)
+            if current_low == curr_low_max and current_low > prev_low_max:
+                higher_lows[i] = 1
+            
+            # Lower Highs: Current high is lowest high in current window AND < lowest high in previous window
+            curr_high_min = np.min(curr_highs)
+            prev_high_min = np.min(prev_highs)
+            if current_high == curr_high_min and current_high < prev_high_min:
+                lower_highs[i] = 1
+            
+            # Lower Lows: Current low < min of current window AND < min of previous window
+            if current_low == np.min(curr_lows) and current_low < np.min(prev_lows):
+                lower_lows[i] = 1
+        
+        # Calculate trend strength
+        trend_strength = (higher_highs + higher_lows - lower_highs - lower_lows) / 4.0
         
         result = {
             'higher_highs': higher_highs,
             'higher_lows': higher_lows,
             'lower_highs': lower_highs,
             'lower_lows': lower_lows,
-            'trend_strength': (higher_highs + higher_lows - lower_highs - lower_lows) / 4.0
+            'trend_strength': trend_strength
         }
         
         # Cache the result
@@ -149,7 +157,6 @@ class PatternsMixin:
         self.performance_stats['vectorized_operations'] += 1
         
         return result
-
     def vectorized_momentum_analysis(self, df):
         """
         Vectorized momentum analysis using NumPy
@@ -221,6 +228,7 @@ class PatternsMixin:
     def vectorized_volume_analysis(self, df):
         """
         Vectorized volume analysis using NumPy
+        FIXED: Safe slicing and more sensitive detection
         """
         cache_key = f"volume_{len(df)}_{df.index[-1]}"
         if cache_key in self.pattern_cache:
@@ -241,22 +249,32 @@ class PatternsMixin:
         volume_breakout = np.zeros(n, dtype=np.int8)
         volume_divergence = np.zeros(n, dtype=np.int8)
         
-        # Vectorized volume analysis
-        volume_sma = pd.Series(volume_values).rolling(20).mean().values
+        # Calculate volume SMA once
+        volume_sma = pd.Series(volume_values).rolling(20, min_periods=1).mean().values
         
+        # Vectorized volume breakout detection
         for i in range(20, n):
-            # Volume breakout detection
-            if volume_values[i] > volume_sma[i] * 1.5:
-                volume_breakout[i] = 1
+            # Volume breakout: Volume > 1.3x average with price movement
+            if volume_values[i] > volume_sma[i] * 1.3:
+                price_change = abs(close_values[i] - close_values[i-1]) / close_values[i-1]
+                if price_change > 0.002:  # 0.2% minimum move
+                    volume_breakout[i] = 1
             
-            # Volume divergence detection (decreasing volume in downtrend)
+            # Volume divergence detection
             if i >= 10:
-                recent_volume_avg = np.mean(volume_values[i-5:i+1])
-                previous_volume_avg = np.mean(volume_values[i-10:i-5])
-                price_trend = close_values[i] < close_values[i-5]  # Price declining
+                # *** SAFE SLICING ***
+                recent_start = max(0, i-5)
+                recent_end = i+1
+                prev_start = max(0, i-10)
+                prev_end = max(0, i-5)
                 
-                if price_trend and recent_volume_avg < previous_volume_avg * 0.8:
-                    volume_divergence[i] = 1
+                if recent_end > recent_start and prev_end > prev_start:
+                    recent_volume_avg = np.mean(volume_values[recent_start:recent_end])
+                    previous_volume_avg = np.mean(volume_values[prev_start:prev_end])
+                    price_trend = close_values[i] < close_values[i-5]
+                    
+                    if price_trend and recent_volume_avg < previous_volume_avg * 0.8:
+                        volume_divergence[i] = 1
         
         result = {
             'volume_breakout': volume_breakout,
@@ -493,6 +511,20 @@ class PatternsMixin:
         swing_analysis = self.vectorized_swing_analysis(df)
         for key, values in swing_analysis.items():
             df[key] = values
+
+        # *** ADD FALLBACK: If patterns failed to generate, use simple logic ***
+        if 'higher_highs' in df.columns and df['higher_highs'].sum() == 0:
+            print("  ⚠️  Warning: Trend structure detection failed, using simplified fallback")
+            
+            # Simple rolling comparison
+            window = 20
+            df['higher_highs'] = ((df['high'] > df['high'].shift(1).rolling(window).max()) & 
+                                (df['high'] > df['high'].shift(window))).astype(np.int8)
+            
+            df['lower_lows'] = ((df['low'] < df['low'].shift(1).rolling(window).min()) & 
+                                (df['low'] < df['low'].shift(window))).astype(np.int8)
+            
+            print(f"    ✓ Fallback created {df['higher_highs'].sum()} higher_highs, {df['lower_lows'].sum()} lower_lows")
         
         # === STEP 2: Trend Structure ===
         trend_analysis = self.vectorized_trend_structure_analysis(df)
