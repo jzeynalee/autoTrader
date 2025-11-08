@@ -77,6 +77,59 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 avg_accuracy = sum(accuracies) / len(accuracies)
                 print(f"   {strategy_class}: {avg_accuracy:.2%} ({len(accuracies)} strategies)")
 
+    def _calculate_strategy_quality_score(self, strategy, ltf_df, final_mask):
+        """
+        Calculate comprehensive quality score for a strategy.
+        Returns score 0-100 based on multiple factors.
+        """
+        if final_mask.sum() < 10:
+            return 0
+        
+        active_bars = ltf_df.loc[final_mask]
+        
+        # Factor 1: Win Rate (0-40 points)
+        win_rate = strategy.get('discovered_accuracy', 0)
+        win_rate_score = min(40, (win_rate - 0.5) * 200)  # 51% = 2pts, 70% = 40pts
+        
+        # Factor 2: Sample Size (0-20 points)
+        sample_size = final_mask.sum()
+        sample_score = min(20, (sample_size / 100) * 20)  # 100 samples = 20pts
+        
+        # Factor 3: Profit Factor (0-20 points)
+        returns = active_bars['future_return']
+        direction = strategy['direction']
+        
+        if direction == 'bullish':
+            winning_returns = returns[returns > 0]
+            losing_returns = returns[returns <= 0]
+        else:
+            winning_returns = returns[returns < 0]
+            losing_returns = returns[returns >= 0]
+        
+        if len(losing_returns) > 0 and losing_returns.sum() != 0:
+            profit_factor = abs(winning_returns.sum() / losing_returns.sum())
+            pf_score = min(20, (profit_factor - 1) * 10)  # PF of 3 = 20pts
+        else:
+            pf_score = 0
+        
+        # Factor 4: Consistency (0-20 points)
+        # Check if strategy works across different market conditions
+        if 'historical_regime' in ltf_df.columns:
+            regimes = active_bars['historical_regime'].unique()
+            consistency_score = min(20, len(regimes) * 5)  # Works in 4+ regimes = 20pts
+        else:
+            consistency_score = 10  # Neutral score
+        
+        total_score = win_rate_score + sample_score + pf_score + consistency_score
+        
+        return {
+            'total_quality_score': total_score,
+            'win_rate_component': win_rate_score,
+            'sample_size_component': sample_score,
+            'profit_factor_component': pf_score,
+            'consistency_component': consistency_score,
+        }
+
     def discover_mtf_strategies_mode_a(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
         Mode A (Refactored): Strict hierarchical MTF cascade (HTF & TTF & LTF)
@@ -377,126 +430,231 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
 
     def discover_mtf_strategies_mode_d(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
-        Mode D(Refactored): Pure Price Action MTF Strategy
-        Uses only swing points, pullbacks, and market structure - NO traditional indicators
-        Receives dataframes as arguments to prevent redundant loads.
+        Mode D: ADVANCED Price Action with Multi-Signal Confluence
+        Uses 3-5 signals per timeframe for high-quality setups
         """
-        print(f"  Discovering Mode D (Price Action) strategies for {group_name}...")
+        print(f"  Discovering Mode D (Advanced Price Action) strategies for {group_name}...")
         
         if htf_df is None:
             return []
         
-        # Enhance dataframes with advanced patterns
+        # Enhance dataframes
         htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
         ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
         ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
 
         strategies = []
         
-        # Define price action signal combinations
-        price_action_signals = {
-            # Bullish price action setups
-            'bullish_setup_1': {
-                'htf': ['higher_lows_pattern', 'trend_medium'],
-                'ttf': ['pullback_complete_bull', 'healthy_bull_pullback'], 
-                'ltf': ['swing_low', 'near_fib_618']
-            },
-            'bullish_setup_2': {
-                'htf': ['trend_medium', 'abc_pullback_bull'],
-                'ttf': ['pullback_stage_resumption_bull', 'volume_decreasing'],
-                'ltf': ['swing_low', 'sr_confluence_score']
+        # *** ADVANCED MULTI-SIGNAL SETUPS ***
+        advanced_setups = {
+            # === BULLISH SETUPS (Multi-Layer Filtering) ===
+            'bullish_trend_pullback_entry': {
+                'description': 'HTF uptrend + TTF pullback complete + LTF entry confirmation',
+                'htf': {
+                    'trend_context': ['trend_medium', 'higher_lows_pattern'],  # Trend must be up
+                    'structure': ['higher_highs'],  # Structure confirmation
+                },
+                'ttf': {
+                    'pullback_signals': ['pullback_complete_bull', 'healthy_bull_pullback'],
+                    'volume_context': ['volume_decreasing'],  # Volume should decrease on pullback
+                },
+                'ltf': {
+                    'entry_triggers': ['swing_low', 'near_fib_618', 'near_fib_500'],  # Multiple fib levels
+                    'confirmation': ['sr_confluence_score'],  # Support/Resistance confluence
+                    'momentum': ['rsi'],  # RSI not overbought
+                },
+                'min_confluence': 3,  # At least 3 signals must align
             },
             
-            # Bearish price action setups  
-            'bearish_setup_1': {
-                'htf': ['lower_highs_pattern', 'trend_medium'],
-                'ttf': ['pullback_complete_bear', 'healthy_bear_pullback'],
-                'ltf': ['swing_high', 'near_fib_382']
+            'bullish_breakout_structure': {
+                'description': 'Multi-timeframe structure break with volume',
+                'htf': {
+                    'trend_context': ['trend_long', 'trend_medium'],
+                    'pattern': ['abc_pullback_bull'],
+                },
+                'ttf': {
+                    'structure': ['structure_break_bullish'],
+                    'confirmation': ['higher_highs'],
+                },
+                'ltf': {
+                    'entry_triggers': ['volume_breakout', 'momentum_continuation'],
+                    'indicators': ['rsi', 'macd_hist'],
+                },
+                'min_confluence': 3,
             },
-            'bearish_setup_2': {
-                'htf': ['trend_medium', 'abc_pullback_bear'],
-                'ttf': ['pullback_stage_resumption_bear', 'volume_decreasing'],
-                'ltf': ['swing_high', 'sr_confluence_score']
-            }
+            
+            'bullish_reversal_confluence': {
+                'description': 'Reversal setup with divergence + structure',
+                'htf': {
+                    'reversal_context': ['failed_pullback_bear', 'swing_failure'],
+                },
+                'ttf': {
+                    'divergence': ['momentum_divergence_bullish'],
+                    'structure': ['false_breakout_bearish'],
+                },
+                'ltf': {
+                    'entry_triggers': ['swing_low', 'structure_break_bullish'],
+                    'volume': ['volume_breakout'],
+                },
+                'min_confluence': 2,
+            },
+            
+            # === BEARISH SETUPS (Mirror Logic) ===
+            'bearish_trend_pullback_entry': {
+                'description': 'HTF downtrend + TTF rally exhaustion + LTF entry',
+                'htf': {
+                    'trend_context': ['trend_medium', 'lower_highs_pattern'],
+                    'structure': ['lower_lows'],
+                },
+                'ttf': {
+                    'pullback_signals': ['pullback_complete_bear', 'healthy_bear_pullback'],
+                    'volume_context': ['volume_decreasing'],
+                },
+                'ltf': {
+                    'entry_triggers': ['swing_high', 'near_fib_382', 'near_fib_236'],
+                    'confirmation': ['sr_confluence_score'],
+                    'momentum': ['rsi'],
+                },
+                'min_confluence': 3,
+            },
+            
+            'bearish_breakout_structure': {
+                'description': 'Multi-timeframe bearish structure break',
+                'htf': {
+                    'trend_context': ['trend_long', 'trend_medium'],
+                    'pattern': ['abc_pullback_bear'],
+                },
+                'ttf': {
+                    'structure': ['structure_break_bearish'],
+                    'confirmation': ['lower_lows'],
+                },
+                'ltf': {
+                    'entry_triggers': ['volume_breakout', 'momentum_continuation'],
+                    'indicators': ['rsi', 'macd_hist'],
+                },
+                'min_confluence': 3,
+            },
+            
+            'bearish_reversal_confluence': {
+                'description': 'Reversal with divergence + failed breakout',
+                'htf': {
+                    'reversal_context': ['failed_pullback_bull', 'swing_failure'],
+                },
+                'ttf': {
+                    'divergence': ['momentum_divergence_bearish'],
+                    'structure': ['false_breakout_bullish'],
+                },
+                'ltf': {
+                    'entry_triggers': ['swing_high', 'structure_break_bearish'],
+                    'volume': ['volume_breakout'],
+                },
+                'min_confluence': 2,
+            },
         }
         
         htf_pair_tf = f"{pair}_{htf_tf}"
         ttf_pair_tf = f"{pair}_{ttf_tf}"
         ltf_pair_tf = f"{pair}_{ltf_tf}"
-
-        for setup_name, signals in price_action_signals.items():
+        
+        # === PROCESS EACH SETUP ===
+        for setup_name, setup_config in advanced_setups.items():
             direction = 'bullish' if 'bullish' in setup_name else 'bearish'
             
-            # Get states for all signals in this setup
-            htf_states = {}
-            for sig in signals['htf']:
-                if sig in htf_df.columns:
-                    htf_states[sig] = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
+            # Build multi-signal mask for each timeframe
+            htf_masks = []
+            ttf_masks = []
+            ltf_masks = []
             
-            ttf_states = {}
-            for sig in signals['ttf']:
-                if sig in ttf_df.columns:
-                    ttf_states[sig] = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
-                    
-            ltf_states = {}
-            for sig in signals['ltf']:
-                if sig in ltf_df.columns:
-                    ltf_states[sig] = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
+            # === HTF: Collect all signal masks ===
+            for category, signals in setup_config['htf'].items():
+                for sig in signals:
+                    if sig in htf_df.columns:
+                        states = self.get_or_compute_states(htf_df, sig, htf_pair_tf)
+                        if states is not None:
+                            mask = (states == direction)
+                            htf_masks.append(mask)
             
-            # Create combined mask (all signals must align)
-            if htf_states and ttf_states and ltf_states:
-                combined_mask = pd.Series(True, index=ltf_df.index)
+            # === TTF: Collect all signal masks ===
+            for category, signals in setup_config['ttf'].items():
+                for sig in signals:
+                    if sig in ttf_df.columns:
+                        states = self.get_or_compute_states(ttf_df, sig, ttf_pair_tf)
+                        if states is not None:
+                            mask = (states == direction)
+                            ttf_masks.append(mask)
+            
+            # === LTF: Collect all signal masks ===
+            for category, signals in setup_config['ltf'].items():
+                for sig in signals:
+                    if sig in ltf_df.columns:
+                        states = self.get_or_compute_states(ltf_df, sig, ltf_pair_tf)
+                        if states is not None:
+                            # Special handling for RSI (check for oversold/overbought)
+                            if sig == 'rsi':
+                                if direction == 'bullish':
+                                    mask = (states == 'bullish') | (ltf_df['rsi'] < 50)
+                                else:
+                                    mask = (states == 'bearish') | (ltf_df['rsi'] > 50)
+                            else:
+                                mask = (states == direction)
+                            ltf_masks.append(mask)
+            
+            # === CONFLUENCE CHECK: Sum how many signals are active ===
+            if len(htf_masks) == 0 or len(ttf_masks) == 0 or len(ltf_masks) == 0:
+                continue
+            
+            # Calculate confluence score (how many signals align)
+            htf_confluence = sum(htf_masks)  # Element-wise sum
+            ttf_confluence = sum(ttf_masks)
+            ltf_confluence = sum(ltf_masks)
+            
+            # Require minimum confluence on each timeframe
+            min_conf = setup_config['min_confluence']
+            final_mask = (
+                (htf_confluence >= min(min_conf, len(htf_masks))) &
+                (ttf_confluence >= min(min_conf, len(ttf_masks))) &
+                (ltf_confluence >= min(min_conf, len(ltf_masks)))
+            )
+            
+            # === BACKTEST ===
+            if final_mask.sum() > 10:
+                aligned_returns = ltf_df.loc[final_mask, 'future_return']
                 
-                # HTF signals must be bullish for bullish setup, etc.
-                for sig, states in htf_states.items():
-                    if states is not None:
-                        if direction == 'bullish':
-                            combined_mask &= (states == 'bullish')
-                        else:
-                            combined_mask &= (states == 'bearish')
+                if direction == 'bullish':
+                    win_rate = (aligned_returns > 0).mean()
+                else:
+                    win_rate = (aligned_returns < 0).mean()
                 
-                for sig, states in ttf_states.items():
-                    if states is not None:
-                        if direction == 'bullish':
-                            combined_mask &= (states == 'bullish')
-                        else:
-                            combined_mask &= (states == 'bearish')
-                            
-                for sig, states in ltf_states.items():
-                    if states is not None:
-                        if direction == 'bullish':
-                            combined_mask &= (states == 'bullish')
-                        else:
-                            combined_mask &= (states == 'bearish')
-                
-                if combined_mask.sum() > 10:
-                    aligned_returns = ltf_df.loc[combined_mask, 'future_return']
+                if win_rate > 0.51:
+                    # Calculate average confluence score for this strategy
+                    avg_confluence = (
+                        htf_confluence.loc[final_mask].mean() +
+                        ttf_confluence.loc[final_mask].mean() +
+                        ltf_confluence.loc[final_mask].mean()
+                    ) / 3
                     
-                    if direction == 'bullish':
-                        win_rate = (aligned_returns > 0).mean()
-                    else:
-                        win_rate = (aligned_returns < 0).mean()
-                    
-                    if win_rate > 0.51:
-                        strategies.append({
-                            'type': 'mtf_mode_d', 
-                            "signal_type": "MTF_COMPOSITE",
-                            'group': group_name,
-                            'pair_tf': f"{pair}_{ltf_tf}",
-                            'direction': direction,
-                            'trade_direction': 'long' if direction == 'bullish' else 'short',
-                            'setup_name': setup_name,
-                            'htf_signals': signals['htf'],
-                            'ttf_signals': signals['ttf'],
-                            'ltf_signals': signals['ltf'],
-                            'htf_timeframe': htf_tf,
-                            'ttf_timeframe': ttf_tf,
-                            'ltf_timeframe': ltf_tf,
-                            'discovered_accuracy': win_rate,
-                            'sample_size': int(combined_mask.sum()),
-                            'performance_score': win_rate,
-                            'strategy_class': 'pure_price_action'
-                        })
+                    strategies.append({
+                        'type': 'mtf_mode_d',
+                        'signal_type': "MTF_COMPOSITE",
+                        'group': group_name,
+                        'pair_tf': f"{pair}_{ltf_tf}",
+                        'direction': direction,
+                        'trade_direction': 'long' if direction == 'bullish' else 'short',
+                        'setup_name': setup_name,
+                        'description': setup_config['description'],
+                        'htf_signals': setup_config['htf'],
+                        'ttf_signals': setup_config['ttf'],
+                        'ltf_signals': setup_config['ltf'],
+                        'htf_timeframe': htf_tf,
+                        'ttf_timeframe': ttf_tf,
+                        'ltf_timeframe': ltf_tf,
+                        'discovered_accuracy': win_rate,
+                        'sample_size': int(final_mask.sum()),
+                        'avg_confluence_score': float(avg_confluence),
+                        'min_required_confluence': min_conf,
+                        'performance_score': win_rate * (1 + avg_confluence / 10),  # Bonus for high confluence
+                        'strategy_class': 'advanced_multi_signal'
+                    })
         
         return strategies
 
@@ -2013,6 +2171,135 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             
             return strategies
     
+    def discover_mtf_strategies_mode_combo(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
+        """
+        Mode COMBO: Dynamically tests combinations of top-performing indicators
+        Finds best 2-3 indicator combinations per timeframe
+        """
+        print(f"  Discovering Mode COMBO (Dynamic Combinations) for {group_name}...")
+        
+        if htf_df is None:
+            return []
+        
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
+        
+        strategies = []
+        
+        # === STEP 1: Identify top-performing single indicators per timeframe ===
+        def get_top_indicators(df, pair_tf, n=5):
+            """Returns top N indicators by individual win rate"""
+            indicator_cols = self.categorize_columns(df)['indicators'][:20]  # Test top 20
+            
+            results = []
+            for ind in indicator_cols:
+                if ind not in df.columns:
+                    continue
+                
+                states = self.get_or_compute_states(df, ind, pair_tf)
+                if states is None:
+                    continue
+                
+                # Test bullish
+                bull_mask = (states == 'bullish')
+                if bull_mask.sum() > 20:
+                    bull_returns = df.loc[bull_mask, 'future_return']
+                    bull_wr = (bull_returns > 0).mean()
+                    results.append(('bullish', ind, bull_wr, bull_mask.sum()))
+                
+                # Test bearish
+                bear_mask = (states == 'bearish')
+                if bear_mask.sum() > 20:
+                    bear_returns = df.loc[bear_mask, 'future_return']
+                    bear_wr = (bear_returns < 0).mean()
+                    results.append(('bearish', ind, bear_wr, bear_mask.sum()))
+            
+            # Sort by win rate, return top N
+            results.sort(key=lambda x: x[2], reverse=True)
+            return results[:n]
+        
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+        
+        htf_top = get_top_indicators(htf_df, htf_pair_tf, n=5)
+        ttf_top = get_top_indicators(ttf_df, ttf_pair_tf, n=5)
+        ltf_top = get_top_indicators(ltf_df, ltf_pair_tf, n=5)
+        
+        if not htf_top or not ttf_top or not ltf_top:
+            return strategies
+        
+        # === STEP 2: Test 2-3 indicator combinations ===
+        from itertools import combinations
+        
+        for direction in ['bullish', 'bearish']:
+            # Get indicators for this direction
+            htf_inds = [ind for dir, ind, wr, _ in htf_top if dir == direction][:3]
+            ttf_inds = [ind for dir, ind, wr, _ in ttf_top if dir == direction][:3]
+            ltf_inds = [ind for dir, ind, wr, _ in ltf_top if dir == direction][:3]
+            
+            if len(htf_inds) < 2 or len(ttf_inds) < 2 or len(ltf_inds) < 2:
+                continue
+            
+            # Test 2-indicator combinations on each timeframe
+            for htf_combo in combinations(htf_inds, 2):
+                for ttf_combo in combinations(ttf_inds, 2):
+                    for ltf_combo in combinations(ltf_inds, 2):
+                        
+                        # Build combined mask
+                        htf_mask = pd.Series(True, index=htf_df.index)
+                        for ind in htf_combo:
+                            states = self.get_or_compute_states(htf_df, ind, htf_pair_tf)
+                            if states is not None:
+                                htf_mask &= (states == direction)
+                        
+                        ttf_mask = pd.Series(True, index=ttf_df.index)
+                        for ind in ttf_combo:
+                            states = self.get_or_compute_states(ttf_df, ind, ttf_pair_tf)
+                            if states is not None:
+                                ttf_mask &= (states == direction)
+                        
+                        ltf_mask = pd.Series(True, index=ltf_df.index)
+                        for ind in ltf_combo:
+                            states = self.get_or_compute_states(ltf_df, ind, ltf_pair_tf)
+                            if states is not None:
+                                ltf_mask &= (states == direction)
+                        
+                        # Final mask: All three timeframes must agree
+                        final_mask = htf_mask & ttf_mask & ltf_mask
+                        
+                        if final_mask.sum() > 15:
+                            returns = ltf_df.loc[final_mask, 'future_return']
+                            
+                            if direction == 'bullish':
+                                win_rate = (returns > 0).mean()
+                            else:
+                                win_rate = (returns < 0).mean()
+                            
+                            # Higher threshold for combo strategies
+                            if win_rate > 0.58:
+                                strategies.append({
+                                    'type': 'mtf_mode_combo',
+                                    'signal_type': "MTF_COMPOSITE",
+                                    'group': group_name,
+                                    'pair_tf': f"{pair}_{ltf_tf}",
+                                    'direction': direction,
+                                    'trade_direction': 'long' if direction == 'bullish' else 'short',
+                                    'htf_indicators': list(htf_combo),
+                                    'ttf_indicators': list(ttf_combo),
+                                    'ltf_indicators': list(ltf_combo),
+                                    'htf_timeframe': htf_tf,
+                                    'ttf_timeframe': ttf_tf,
+                                    'ltf_timeframe': ltf_tf,
+                                    'discovered_accuracy': win_rate,
+                                    'sample_size': int(final_mask.sum()),
+                                    'performance_score': win_rate * 1.1,  # Bonus for combo
+                                    'strategy_class': 'dynamic_combo'
+                                })
+        
+        return strategies
+    
     def discover_mtf_strategies_mode_confluence(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
         Mode Confluence (Refactored):
@@ -2183,6 +2470,38 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             import traceback
             print(f"❌ [discover_mtf_strategies_mode_confluence] TRACEBACK: {traceback.format_exc()}")
             return []
+        
+    def _filter_and_rank_strategies(self, strategies):
+            """
+            Post-discovery filter to keep only high-quality strategies
+            """
+            print("\n🔍 Filtering strategies for quality...")
+            
+            filtered = []
+            
+            for strategy in strategies:
+                # Skip if too few samples
+                if strategy.get('sample_size', 0) < 15:
+                    continue
+                
+                # Skip if win rate too low
+                if strategy.get('discovered_accuracy', 0) < 0.52:
+                    continue
+                
+                # Calculate quality score if not already present
+                if 'quality_score' not in strategy:
+                    strategy['quality_score'] = strategy.get('performance_score', 0) * 100
+                
+                # Keep if quality score >= 50
+                if strategy['quality_score'] >= 50:
+                    filtered.append(strategy)
+            
+            # Sort by performance score
+            filtered.sort(key=lambda x: x.get('performance_score', 0), reverse=True)
+            
+            print(f"  Kept {len(filtered)}/{len(strategies)} strategies after filtering")
+            
+            return filtered
 
     def discover_mtf_strategies(self):
         """
@@ -2265,6 +2584,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 ('L', self.discover_mtf_strategies_mode_l),
                 ('M', getattr(self, 'discover_mtf_strategies_mode_m', lambda *args: [])),
                 ('N', getattr(self, 'discover_mtf_strategies_mode_n', lambda *args: [])),
+                ('COMBO', self.discover_mtf_strategies_mode_combo),
                 ('Confluence', self.discover_mtf_strategies_mode_confluence)
             ]:
                 try:
@@ -2293,8 +2613,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 print(f"{count}{mode} ", end="")
             print()
 
-
         
+        
+        # Filter for quality
+        all_mtf_strategies = self._filter_and_rank_strategies(all_mtf_strategies)
+
         # Add to strategy pool
         for strategy in all_mtf_strategies:
             strategy_key = f"MTF_{strategy_id:04d}"
