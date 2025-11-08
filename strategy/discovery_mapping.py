@@ -13,6 +13,15 @@ This version maps ALL indicators calculated by calculator.py:
 
 import pandas as pd
 import numpy as np
+import warnings
+
+# Filter out the specific FutureWarning related to downcasting in replace
+warnings.filterwarnings(
+    action='ignore',
+    category=FutureWarning,
+    message='Downcasting behavior in `replace` is deprecated'
+)
+pd.set_option('future.no_silent_downcasting', True)
 
 # [Previous pattern definitions remain the same]
 BULLISH_PATTERNS = {
@@ -561,36 +570,45 @@ def map_indicator_state(df, indicator_name, pair_tf=None):
     elif indicator_name == "equal_highs_lows":
         states[values == 1] = "bearish"
         states[values == -1] = "bullish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "swing_failure":
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "structure_break_bullish":
         states[values == 1] = "bullish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "structure_break_bearish":
         states[values == 1] = "bearish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "false_breakout_bullish":
         states[values == 1] = "bullish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "false_breakout_bearish":
         states[values == 1] = "bearish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "momentum_divergence_bullish":
         states[values == 1] = "bullish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
 
     elif indicator_name == "momentum_divergence_bearish":
         states[values == 1] = "bearish"
-        states = states.replace('neutral', np.nan).infer_objects(copy=False).ffill(limit=fill_limit).fillna('neutral')
+        states = states.replace('neutral', np.nan).infer_objects(copy=False)
+        states = states.ffill(limit=fill_limit).fillna('neutral')
+
         
 
     elif indicator_name == "momentum_continuation":
