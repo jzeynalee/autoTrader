@@ -535,66 +535,71 @@ def map_indicator_state(df, indicator_name, pair_tf=None):
         states[distance_pct > 20] = "bullish"
 
     # ============================================================
-    # SECTION 7: ADVANCED PRICE ACTION (15+ types) - âœ… NEW!
+    # SECTION 7: ADVANCED PRICE ACTION (15+ types) - FIXED NAMES
     # ============================================================
-    
-    elif indicator_name == "trend_structure":
+
+    elif indicator_name == 'trend_structure':
         states[values.isin(['strong_uptrend', 'uptrend'])] = "bullish"
         states[values.isin(['strong_downtrend', 'downtrend'])] = "bearish"
-    
-    elif indicator_name == "market_structure":
+
+    elif indicator_name == 'market_structure':
         states[values.isin(['strong_trend', 'trending'])] = "bullish"
         states[values == 'ranging'] = "neutral"
-    
-    elif indicator_name == "higher_highs_lower_lows":
+
+    # FIX: Map the ACTUAL column names from patterns.py
+    elif indicator_name == 'higher_highs':  # NOT 'higher_highs_lower_lows'!
+        states[values == 1] = "bullish"
+
+    elif indicator_name == 'lower_lows':  # Separate column!
+        states[values == 1] = "bearish"
+
+    elif indicator_name == 'volume_breakout':  # ADD THIS (was missing!)
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
-    
-    # --- EVENT-BASED MAPPING (Refactored to forward-fill) ---
-    # These signals are now "sticky" for 5 bars
+
+    # Keep existing mappings for event-based patterns
     elif indicator_name == "equal_highs_lows":
         states[values == 1] = "bearish"
         states[values == -1] = "bullish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "swing_failure":
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "structure_break_bullish":
         states[values == 1] = "bullish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "structure_break_bearish":
         states[values == 1] = "bearish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "false_breakout_bullish":
         states[values == 1] = "bullish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "false_breakout_bearish":
         states[values == 1] = "bearish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "momentum_divergence_bullish":
         states[values == 1] = "bullish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-    
+
     elif indicator_name == "momentum_divergence_bearish":
         states[values == 1] = "bearish"
         states = states.replace('neutral', np.nan).ffill(limit=fill_limit).fillna('neutral')
-     
-    # --- STATE-BASED MAPPING (remains the same) ---    
+
     elif indicator_name == "momentum_continuation":
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
-    
+
     elif indicator_name == "volume_breakout_confirmation":
         states[values == 1] = "bullish"
         states[values == -1] = "bearish"
-    
+
     elif indicator_name == "volume_divergence":
         states[values == 1] = "bullish"
 

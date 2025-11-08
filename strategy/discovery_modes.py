@@ -662,20 +662,25 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
         
         strategies = []
+
+        # *** ADD DEBUGGING ***
+        self._debug_pattern_availability(htf_df, ['higher_highs', 'lower_lows'], f"{pair}_{htf_tf}")
+        self._debug_pattern_availability(ttf_df, ['momentum_divergence_bullish'], f"{pair}_{ttf_tf}")
+        self._debug_pattern_availability(ltf_df, ['volume_breakout'], f"{pair}_{ltf_tf}")
         
         # === RELAXED SETUPS - Use simpler, more common patterns ===
         advanced_setups = {
             'structural_breakout_bull': {
                 'description': 'Bullish structure break with momentum',
-                'htf': ['higher_highs'],  # From vectorized_trend_structure_analysis
-                'ttf': ['momentum_divergence_bullish'],  # From vectorized_momentum_analysis
-                'ltf': ['volume_breakout']  # From vectorized_volume_analysis
+                'htf': ['higher_highs'],  # ✓ ACTUAL column name
+                'ttf': ['momentum_divergence_bullish'],
+                'ltf': ['volume_breakout']  # ✓ ACTUAL column name
             },
             'structural_breakout_bear': {
                 'description': 'Bearish structure break with momentum',
-                'htf': ['lower_lows'],  # From vectorized_trend_structure_analysis
-                'ttf': ['momentum_divergence_bearish'],  # From vectorized_momentum_analysis
-                'ltf': ['volume_breakout']  # From vectorized_volume_analysis
+                'htf': ['lower_lows'],  # ✓ ACTUAL column name
+                'ttf': ['momentum_divergence_bearish'],
+                'ltf': ['volume_breakout']
             }
         }
         
@@ -1479,7 +1484,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         return strategies
 
-    def discover_mtf_strategies_mode_l(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
+    '''def discover_mtf_strategies_mode_l(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
         Mode L (Refactored): Advanced Structure-Aligned Strategy Discovery
         Uses comprehensive MTF structure alignment for high-confidence setups.
@@ -1568,6 +1573,116 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                             strategies.append({
                                 'type': 'mtf_mode_l', 
                                 "signal_type": "MTF_COMPOSITE",
+                                'group': group_name,
+                                'pair_tf': f"{pair}_{ltf_tf}",
+                                'direction': direction,
+                                'trade_direction': 'long' if direction == 'bullish' else 'short',
+                                'setup_name': setup['name'],
+                                'description': setup['description'],
+                                'structure_alignment_score': current_alignment_score,
+                                'alignment_quality': current_alignment_quality,
+                                'alignment_metrics': structure_alignment,
+                                'signals': setup['signals'],
+                                'htf_timeframe': htf_tf,
+                                'ttf_timeframe': ttf_tf,
+                                'ltf_timeframe': ltf_tf,
+                                'discovered_accuracy': win_rate,
+                                'sample_size': int(signal_mask.sum()),
+                                'performance_score': win_rate * (1 + current_alignment_score),
+                                'strategy_class': 'structure_aligned'
+                            })
+        
+        return strategies'''
+        
+    def discover_mtf_strategies_mode_l(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
+        """Mode L (Structure-Aligned) strategies"""
+        print(f"  Discovering Mode L (Structure-Aligned) strategies for {group_name}...")
+
+        if htf_df is None:
+            return []
+        
+        # Enhance dataframes
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
+
+        strategies = []
+        
+        # Get structure alignment
+        structure_alignment = self.analyze_mtf_structure_alignment(htf_df, ttf_df, ltf_df)
+        
+        # Only proceed with good alignment
+        if structure_alignment['alignment_quality'] in ['poor', 'fair']:
+            return strategies
+        
+        structure_setups = [
+            {
+                'name': 'perfect_alignment_breakout',
+                'description': 'Perfect MTF alignment with breakout confirmation',
+                'required_alignment': 'excellent',
+                'min_alignment_score': 0.8,
+                'signals': {
+                    'htf': ['trend_structure'],
+                    'ttf': ['structure_break_bullish'],
+                    'ltf': ['higher_highs']  # Use actual column name
+                }
+            },
+            {
+                'name': 'aligned_pullback_entry',
+                'description': 'Aligned pullback across timeframes',
+                'required_alignment': 'good',
+                'min_alignment_score': 0.6,
+                'signals': {
+                    'htf': ['trend_structure'],
+                    'ttf': ['pullback_complete_bull'],
+                    'ltf': ['swing_low']
+                }
+            }
+        ]
+        
+        current_alignment_quality = structure_alignment['alignment_quality']
+        current_alignment_score = structure_alignment['overall_alignment_score']
+        
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+        
+        for setup in structure_setups:
+            if (current_alignment_quality == setup['required_alignment'] and 
+                current_alignment_score >= setup['min_alignment_score']):
+                
+                for direction in ['bullish', 'bearish']:
+                    # *** FIX: Initialize with LTF index ***
+                    signal_mask = pd.Series(True, index=ltf_df.index)
+                    
+                    for tf, signals in setup['signals'].items():
+                        df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
+                        current_pair_tf = htf_pair_tf if tf == 'htf' else (ttf_pair_tf if tf == 'ttf' else ltf_pair_tf)
+                        
+                        for signal in signals:
+                            if signal in df.columns:
+                                states = self.get_or_compute_states(df, signal, current_pair_tf)
+                                if states is not None:
+                                    # *** FIX: Ensure states align with signal_mask ***
+                                    states_aligned = states.reindex(signal_mask.index, fill_value='neutral')
+                                    
+                                    if direction == 'bullish':
+                                        signal_mask &= (states_aligned == 'bullish')
+                                    else:
+                                        signal_mask &= (states_aligned == 'bearish')
+                    
+                    if signal_mask.sum() > 5:
+                        aligned_returns = ltf_df.loc[signal_mask, 'future_return']
+                        
+                        if direction == 'bullish':
+                            win_rate = (aligned_returns > 0).mean()
+                        else:
+                            win_rate = (aligned_returns < 0).mean()
+                        
+                        if win_rate > 0.51:
+                            strategies.append({
+                                'type': 'mtf_mode_l',
+                                'signal_type': "MTF_COMPOSITE",
                                 'group': group_name,
                                 'pair_tf': f"{pair}_{ltf_tf}",
                                 'direction': direction,
@@ -2238,3 +2353,21 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 'diversified_portfolios': diversified_portfolios,
                 'strategy_returns': returns_df
             }
+    
+    def _debug_pattern_availability(self, df, pattern_list, pair_tf):
+        """Debug helper: Check which patterns exist and have non-zero values"""
+        print(f"\n  🔍 DEBUG: Checking pattern availability for {pair_tf}")
+        
+        for pattern in pattern_list:
+            if pattern in df.columns:
+                count = (df[pattern] != 0).sum()
+                states = self.get_or_compute_states(df, pattern, pair_tf)
+                
+                if states is not None:
+                    bullish = (states == 'bullish').sum()
+                    bearish = (states == 'bearish').sum()
+                    print(f"    ✓ {pattern}: {count} non-zero | {bullish} bullish | {bearish} bearish")
+                else:
+                    print(f"    ✗ {pattern}: EXISTS but NOT MAPPED!")
+            else:
+                print(f"    ✗ {pattern}: NOT FOUND in DataFrame!")

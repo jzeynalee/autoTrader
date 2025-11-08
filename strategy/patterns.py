@@ -621,6 +621,169 @@ class PatternsMixin:
         self.performance_stats['vectorized_operations'] += 4
         
         return df
+    
+    def _analyze_trend_structure(self, df):
+        """Analyze overall trend structure state"""
+        trend_vals = np.where(df['close'] > df['ema_50'], 1, 
+                    np.where(df['close'] < df['ema_50'], -1, 0))
+        
+        # Use rolling count to determine strength
+        uptrend_strength = pd.Series(trend_vals).rolling(20).apply(
+            lambda x: (x == 1).sum() / len(x), raw=True
+        )
+        
+        result = pd.Series('neutral', index=df.index)
+        result[uptrend_strength > 0.7] = 'strong_uptrend'
+        result[(uptrend_strength >= 0.55) & (uptrend_strength <= 0.7)] = 'uptrend'
+        result[(uptrend_strength >= 0.3) & (uptrend_strength < 0.45)] = 'downtrend'
+        result[uptrend_strength < 0.3] = 'strong_downtrend'
+        
+        return result
+
+    def _analyze_market_structure(self, df):
+        """Analyze market structure (trending vs ranging)"""
+        # Use ADX as primary indicator
+        if 'adx' in df.columns:
+            result = pd.Series('ranging', index=df.index)
+            result[df['adx'] > 35] = 'strong_trend'
+            result[(df['adx'] >= 25) & (df['adx'] <= 35)] = 'trending'
+            return result
+        
+        # Fallback: use price volatility
+        returns = df['close'].pct_change()
+        vol = returns.rolling(20).std()
+        result = pd.Series('ranging', index=df.index)
+        result[vol > vol.quantile(0.7)] = 'trending'
+        return result
+
+    def _detect_hh_ll_pattern(self, df):
+        """Detect Higher Highs and Lower Lows pattern"""
+        if 'higher_highs' not in df.columns or 'lower_lows' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        # Return 1 for HH pattern, -1 for LL pattern
+        return np.where(df['higher_highs'] == 1, 1,
+                        np.where(df['lower_lows'] == 1, -1, 0))
+
+    def _detect_equal_highs_lows(self, df):
+        """Detect equal highs/lows (consolidation)"""
+        highs = df['high'].rolling(10).max()
+        lows = df['low'].rolling(10).min()
+        
+        # Check if range is compressing
+        range_pct = (highs - lows) / df['close']
+        range_avg = range_pct.rolling(20).mean()
+        
+        # Equal highs/lows when current range < 50% of average
+        return np.where(range_pct < range_avg * 0.5, 1, 0)
+
+    def _detect_swing_failures(self, df):
+        """Detect swing failures (false breaks)"""
+        if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        result = pd.Series(0, index=df.index)
+        
+        # Bullish swing failure: Price breaks below swing low but closes above it
+        swing_lows = df['low'].where(df['swing_low'] == 1).ffill()
+        bullish_failure = (df['low'] < swing_lows) & (df['close'] > swing_lows)
+        result[bullish_failure] = 1
+        
+        # Bearish swing failure: Price breaks above swing high but closes below it
+        swing_highs = df['high'].where(df['swing_high'] == 1).ffill()
+        bearish_failure = (df['high'] > swing_highs) & (df['close'] < swing_highs)
+        result[bearish_failure] = -1
+        
+        return result
+
+    def _detect_structure_break_bullish(self, df):
+        """Detect bullish structure breaks"""
+        if 'swing_high' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        # Last swing high
+        last_swing_high = df['high'].where(df['swing_high'] == 1).ffill()
+        
+        # Break confirmed when close > last swing high with volume
+        vol_confirm = df['volume'] > df['volume'].rolling(20).mean() if 'volume' in df.columns else True
+        
+        return ((df['close'] > last_swing_high) & vol_confirm).astype(int)
+
+    def _detect_structure_break_bearish(self, df):
+        """Detect bearish structure breaks"""
+        if 'swing_low' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        last_swing_low = df['low'].where(df['swing_low'] == 1).ffill()
+        vol_confirm = df['volume'] > df['volume'].rolling(20).mean() if 'volume' in df.columns else True
+        
+        return ((df['close'] < last_swing_low) & vol_confirm).astype(int)
+
+    def _detect_false_breakout_bullish(self, df):
+        """Detect bullish false breakouts (bear traps)"""
+        if 'swing_low' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        # Price breaks swing low but quickly reverses
+        swing_lows = df['low'].where(df['swing_low'] == 1).ffill()
+        
+        # 3-bar reversal pattern
+        break_below = df['low'] < swing_lows
+        quick_recovery = df['close'].shift(-2) > swing_lows * 1.005  # Close back above within 2 bars
+        
+        return (break_below & quick_recovery.shift(2).fillna(False)).astype(int)
+
+    def _detect_false_breakout_bearish(self, df):
+        """Detect bearish false breakouts (bull traps)"""
+        if 'swing_high' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        swing_highs = df['high'].where(df['swing_high'] == 1).ffill()
+        
+        break_above = df['high'] > swing_highs
+        quick_reversal = df['close'].shift(-2) < swing_highs * 0.995
+        
+        return (break_above & quick_reversal.shift(2).fillna(False)).astype(int)
+
+    def _detect_momentum_continuation(self, df):
+        """Detect momentum continuation patterns"""
+        if 'rsi' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        # RSI stays above 50 (bullish momentum) or below 50 (bearish)
+        rsi_trend = df['rsi'].rolling(5).mean()
+        
+        bullish = (rsi_trend > 50) & (df['close'] > df['close'].shift(1))
+        bearish = (rsi_trend < 50) & (df['close'] < df['close'].shift(1))
+        
+        return np.where(bullish, 1, np.where(bearish, -1, 0))
+
+    def _detect_volume_breakout_confirmation(self, df):
+        """Detect volume-confirmed breakouts"""
+        if 'volume' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        # Volume spike + price movement
+        vol_spike = df['volume'] > df['volume'].rolling(20).mean() * 1.5
+        price_move = abs(df['close'].pct_change()) > df['close'].pct_change().rolling(20).std()
+        
+        bullish = vol_spike & (df['close'] > df['close'].shift(1)) & price_move
+        bearish = vol_spike & (df['close'] < df['close'].shift(1)) & price_move
+        
+        return np.where(bullish, 1, np.where(bearish, -1, 0))
+
+    def _detect_volume_divergence(self, df):
+        """Detect volume divergence (price up, volume down = bearish)"""
+        if 'volume' not in df.columns:
+            return pd.Series(0, index=df.index)
+        
+        price_trend = df['close'].rolling(10).apply(lambda x: 1 if x.iloc[-1] > x.iloc[0] else -1, raw=False)
+        vol_trend = df['volume'].rolling(10).apply(lambda x: 1 if x.iloc[-1] > x.iloc[0] else -1, raw=False)
+        
+        # Divergence when price and volume move opposite
+        divergence = price_trend != vol_trend
+        
+        return divergence.astype(int)
 
     # =========================================================================
     # 6.4 MEMORY MANAGEMENT AND CACHE OPTIMIZATION
