@@ -18,7 +18,7 @@ from .analysis_trend import TrendAnalysisSystem
 from .analysis_pullback import PullbackAnalysisSystem
 from .analysis_advanced_regime import AdvancedRegimeDetectionSystem
 from .analysis_confluence_scoring import ConfluenceScoringSystem
-from autoTrader.db_connector import DatabaseConnector
+from ..db_connector import DatabaseConnector
 
 try:
     from .discovery_mapping import (
@@ -426,6 +426,124 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
 
         print(f"\n✓ Discovered {total_found} signal-price correlations") # <-- FIX for logging
         return self.strategy_pool
+    
+    def discover_combination_strategies(self):
+        """
+        COMPLETE REWRITE: Creates multi-indicator combination strategies
+        by analyzing rows where price moved significantly and finding
+        ALL confirming indicators/patterns active at that moment.
+        """
+        print("\n" + "="*80)
+        print("DISCOVERING COMBINATION STRATEGIES")
+        print("="*80)
+        
+        combination_strategies = []
+        strategy_id = len(self.strategy_pool) + 1
+        
+        # Process each timeframe
+        for pair_tf, df in self.all_dataframes.items():
+            print(f"\nAnalyzing {pair_tf} for combinations...")
+            
+            if 'price_state' not in df.columns:
+                df = self.identify_price_states(df)
+            
+            # Get all available signals
+            categories = self.categorize_columns(df)
+            all_signals = (categories['indicators'] + 
+                        categories['candlestick_patterns'] + 
+                        categories['chart_patterns'])
+            
+            # === FIND STRONG PRICE MOVEMENTS ===
+            strong_bullish = df['price_state'] == 'bullish'
+            strong_bearish = df['price_state'] == 'bearish'
+            
+            # === ANALYZE EACH STRONG MOVEMENT BAR ===
+            for direction, mask in [('bullish', strong_bullish), ('bearish', strong_bearish)]:
+                if mask.sum() < 10:  # Need minimum occurrences
+                    continue
+                
+                # Get indices of strong movements
+                movement_indices = df[mask].index
+                
+                # Dictionary to track signal co-occurrences
+                signal_combinations = defaultdict(lambda: {
+                    'occurrences': 0,
+                    'successful': 0,
+                    'signals': set()
+                })
+                
+                # === ANALYZE EACH BAR ===
+                for idx in movement_indices:
+                    try:
+                        # Get all active signals at this bar
+                        active_signals = []
+                        
+                        for signal in all_signals:
+                            if signal not in df.columns:
+                                continue
+                            
+                            states = self.get_or_compute_states(df, signal, pair_tf)
+                            if states is None:
+                                continue
+                            
+                            # Check if signal was active at this bar
+                            try:
+                                if states.loc[idx] == direction:
+                                    active_signals.append(signal)
+                            except KeyError:
+                                continue
+                        
+                        # Only consider bars with 3+ confirming signals
+                        if len(active_signals) >= 3:
+                            # Create a unique key for this combination
+                            combo_key = tuple(sorted(active_signals[:5]))  # Limit to top 5
+                            
+                            # Track this combination
+                            signal_combinations[combo_key]['occurrences'] += 1
+                            signal_combinations[combo_key]['signals'].update(active_signals)
+                            
+                            # Check if price movement was successful
+                            future_return = df.loc[idx, 'future_return']
+                            if (direction == 'bullish' and future_return > 0) or \
+                            (direction == 'bearish' and future_return < 0):
+                                signal_combinations[combo_key]['successful'] += 1
+                    
+                    except Exception as e:
+                        continue
+                
+                # === CREATE STRATEGIES FROM HIGH-PERFORMING COMBINATIONS ===
+                for combo_key, stats in signal_combinations.items():
+                    if stats['occurrences'] < 10:  # Minimum sample size
+                        continue
+                    
+                    win_rate = stats['successful'] / stats['occurrences']
+                    
+                    if win_rate > 0.55:  # Combination threshold (lower than single signals)
+                        combination_strategies.append({
+                            'id': strategy_id,
+                            'type': 'combination',
+                            'pair_tf': pair_tf,
+                            'direction': direction,
+                            'trade_direction': 'long' if direction == 'bullish' else 'short',
+                            'signals': list(stats['signals']),
+                            'primary_signals': list(combo_key),  # The core combo
+                            'signal_count': len(stats['signals']),
+                            'discovered_accuracy': win_rate,
+                            'sample_size': stats['occurrences'],
+                            'successful_trades': stats['successful'],
+                            'performance_score': win_rate * (1 + len(stats['signals']) * 0.05),  # Bonus for more confirmation
+                            'strategy_class': 'multi_signal_combination'
+                        })
+                        
+                        strategy_id += 1
+        
+        # === ADD TO STRATEGY POOL ===
+        for strategy in combination_strategies:
+            strategy_key = f"COMBO_{strategy['id']:04d}"
+            self.strategy_pool[strategy_key] = strategy
+        
+        print(f"\n✅ Discovered {len(combination_strategies)} combination strategies")
+        return combination_strategies
     
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # SECTION: Delegations & Mixin-Called Functions

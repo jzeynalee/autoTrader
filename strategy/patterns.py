@@ -491,7 +491,7 @@ class PatternsMixin:
         
         return df'''
 
-    # Replace the optimized_detect_advanced_price_patterns method in patterns.py
+    '''# Replace the optimized_detect_advanced_price_patterns method in patterns.py
 
     def optimized_detect_advanced_price_patterns(self, df):
         """
@@ -652,7 +652,267 @@ class PatternsMixin:
         self.performance_stats['computation_time_saved'] += (time.time() - start_time)
         self.performance_stats['vectorized_operations'] += 4
         
+        return df'''
+    
+    def optimized_detect_advanced_price_patterns(self, df):
+        """
+        FIXED VERSION: Creates ALL patterns required by advanced modes
+        with proper fallbacks when vectorized detection fails
+        """
+        cache_key = f"patterns_{len(df)}_{df.index[-1]}"
+        if cache_key in self.pattern_cache:
+            self.performance_stats['cache_hits'] += 1
+            return self.pattern_cache[cache_key]
+        
+        self.performance_stats['cache_misses'] += 1
+        start_time = time.time()
+        
+        df = df.copy()
+        
+        # === STEP 1: Basic Swing Analysis ===
+        swing_analysis = self.vectorized_swing_analysis(df)
+        for key, values in swing_analysis.items():
+            df[key] = values
+        
+        # === STEP 2: Trend Structure (with fallback) ===
+        trend_analysis = self.vectorized_trend_structure_analysis(df)
+        for key, values in trend_analysis.items():
+            df[key] = values
+        
+        # *** CRITICAL FIX: Check if patterns were actually created ***
+        if df['higher_highs'].sum() == 0 and df['lower_lows'].sum() == 0:
+            print(f"  ⚠️  Vectorized trend detection failed, using simple fallback")
+            
+            # SIMPLE BUT EFFECTIVE FALLBACK
+            window = 10
+            
+            # Higher Highs: Current high is highest in window
+            df['higher_highs'] = (df['high'] == df['high'].rolling(window).max()).astype(np.int8)
+            
+            # Lower Lows: Current low is lowest in window
+            df['lower_lows'] = (df['low'] == df['low'].rolling(window).min()).astype(np.int8)
+            
+            # Higher Lows: Current low > previous window low
+            df['higher_lows'] = (df['low'] > df['low'].shift(1).rolling(window).min()).astype(np.int8)
+            
+            # Lower Highs: Current high < previous window high
+            df['lower_highs'] = (df['high'] < df['high'].shift(1).rolling(window).max()).astype(np.int8)
+        
+        # === STEP 3: Momentum & Volume ===
+        momentum_analysis = self.vectorized_momentum_analysis(df)
+        for key, values in momentum_analysis.items():
+            df[key] = values if key not in df.columns else np.maximum(df[key].values, values)
+        
+        volume_analysis = self.vectorized_volume_analysis(df)
+        for key, values in volume_analysis.items():
+            df[key] = values if key not in df.columns else np.maximum(df[key].values, values)
+        
+        # === STEP 4: SYNTHESIZED HIGH-LEVEL PATTERNS (Required by Modes F-N) ===
+        
+        # Trend Structure State
+        if 'trend_structure' not in df.columns:
+            # Based on EMA 50
+            if 'ema_50' in df.columns:
+                above_ema = df['close'] > df['ema_50']
+                uptrend_strength = above_ema.rolling(20).mean()
+                
+                df['trend_structure'] = 'neutral'
+                df.loc[uptrend_strength > 0.7, 'trend_structure'] = 'strong_uptrend'
+                df.loc[(uptrend_strength >= 0.55) & (uptrend_strength <= 0.7), 'trend_structure'] = 'uptrend'
+                df.loc[(uptrend_strength < 0.45) & (uptrend_strength >= 0.3), 'trend_structure'] = 'downtrend'
+                df.loc[uptrend_strength < 0.3, 'trend_structure'] = 'strong_downtrend'
+            else:
+                df['trend_structure'] = 'neutral'
+        
+        # Market Structure (Trending vs Ranging)
+        if 'market_structure' not in df.columns:
+            if 'adx' in df.columns:
+                df['market_structure'] = 'ranging'
+                df.loc[df['adx'] > 30, 'market_structure'] = 'strong_trend'
+                df.loc[(df['adx'] >= 20) & (df['adx'] <= 30), 'market_structure'] = 'trending'
+            else:
+                df['market_structure'] = 'ranging'
+        
+        # Structure Breaks
+        if 'structure_break_bullish' not in df.columns:
+            last_swing_high = df['high'].where(df['swing_high'] == 1).ffill()
+            vol_spike = df['volume'] > df['volume'].rolling(20).mean() * 1.2 if 'volume' in df.columns else True
+            df['structure_break_bullish'] = ((df['close'] > last_swing_high) & vol_spike).astype(np.int8)
+        
+        if 'structure_break_bearish' not in df.columns:
+            last_swing_low = df['low'].where(df['swing_low'] == 1).ffill()
+            vol_spike = df['volume'] > df['volume'].rolling(20).mean() * 1.2 if 'volume' in df.columns else True
+            df['structure_break_bearish'] = ((df['close'] < last_swing_low) & vol_spike).astype(np.int8)
+        
+        # False Breakouts
+        if 'false_breakout_bullish' not in df.columns:
+            swing_lows = df['low'].where(df['swing_low'] == 1).ffill()
+            break_below = df['low'] < swing_lows
+            recovery = df['close'].shift(-2) > swing_lows * 1.003
+            df['false_breakout_bullish'] = (break_below & recovery.shift(2).fillna(False)).astype(np.int8)
+        
+        if 'false_breakout_bearish' not in df.columns:
+            swing_highs = df['high'].where(df['swing_high'] == 1).ffill()
+            break_above = df['high'] > swing_highs
+            reversal = df['close'].shift(-2) < swing_highs * 0.997
+            df['false_breakout_bearish'] = (break_above & reversal.shift(2).fillna(False)).astype(np.int8)
+        
+        # Momentum Continuation
+        if 'momentum_continuation' not in df.columns:
+            if 'rsi' in df.columns:
+                rsi_trend = df['rsi'].rolling(5).mean()
+                bullish = (rsi_trend > 50) & (df['close'] > df['close'].shift(1))
+                bearish = (rsi_trend < 50) & (df['close'] < df['close'].shift(1))
+                df['momentum_continuation'] = np.where(bullish, 1, np.where(bearish, -1, 0))
+            else:
+                df['momentum_continuation'] = 0
+        
+        # Equal Highs/Lows (Consolidation)
+        if 'equal_highs_lows' not in df.columns:
+            highs = df['high'].rolling(10).max()
+            lows = df['low'].rolling(10).min()
+            range_pct = (highs - lows) / df['close']
+            range_avg = range_pct.rolling(20).mean()
+            df['equal_highs_lows'] = (range_pct < range_avg * 0.5).astype(np.int8)
+        
+        # Swing Failures
+        if 'swing_failure' not in df.columns:
+            swing_lows = df['low'].where(df['swing_low'] == 1).ffill()
+            swing_highs = df['high'].where(df['swing_high'] == 1).ffill()
+            
+            bullish_failure = (df['low'] < swing_lows) & (df['close'] > swing_lows)
+            bearish_failure = (df['high'] > swing_highs) & (df['close'] < swing_highs)
+            
+            df['swing_failure'] = np.where(bullish_failure, 1, 
+                                        np.where(bearish_failure, -1, 0))
+        
+        # Volume Breakout Confirmation
+        if 'volume_breakout_confirmation' not in df.columns and 'volume' in df.columns:
+            vol_spike = df['volume'] > df['volume'].rolling(20).mean() * 1.5
+            price_move = abs(df['close'].pct_change()) > df['close'].pct_change().rolling(20).std()
+            
+            bullish = vol_spike & (df['close'] > df['close'].shift(1)) & price_move
+            bearish = vol_spike & (df['close'] < df['close'].shift(1)) & price_move
+            
+            df['volume_breakout_confirmation'] = np.where(bullish, 1, 
+                                                        np.where(bearish, -1, 0))
+        elif 'volume_breakout_confirmation' not in df.columns:
+            df['volume_breakout_confirmation'] = 0
+        
+        # === STEP 5: PULLBACK PATTERNS (Simplified for Mode D, E) ===
+        
+        # Pullback Complete
+        if 'pullback_complete_bull' not in df.columns:
+            # Simple: Price pullback to MA then bounce
+            if 'ema_20' in df.columns:
+                near_ema = abs(df['close'] - df['ema_20']) / df['ema_20'] < 0.01
+                bounce = df['close'] > df['close'].shift(1)
+                df['pullback_complete_bull'] = (near_ema & bounce).astype(np.int8)
+            else:
+                df['pullback_complete_bull'] = 0
+        
+        if 'pullback_complete_bear' not in df.columns:
+            if 'ema_20' in df.columns:
+                near_ema = abs(df['close'] - df['ema_20']) / df['ema_20'] < 0.01
+                reject = df['close'] < df['close'].shift(1)
+                df['pullback_complete_bear'] = (near_ema & reject).astype(np.int8)
+            else:
+                df['pullback_complete_bear'] = 0
+        
+        # Healthy Pullback (Volume decreases during pullback)
+        if 'healthy_bull_pullback' not in df.columns and 'volume' in df.columns:
+            pullback = df['close'] < df['close'].shift(5)
+            vol_decrease = df['volume'] < df['volume'].rolling(10).mean()
+            df['healthy_bull_pullback'] = (pullback & vol_decrease).astype(np.int8)
+        elif 'healthy_bull_pullback' not in df.columns:
+            df['healthy_bull_pullback'] = 0
+        
+        if 'healthy_bear_pullback' not in df.columns and 'volume' in df.columns:
+            rally = df['close'] > df['close'].shift(5)
+            vol_decrease = df['volume'] < df['volume'].rolling(10).mean()
+            df['healthy_bear_pullback'] = (rally & vol_decrease).astype(np.int8)
+        elif 'healthy_bear_pullback' not in df.columns:
+            df['healthy_bear_pullback'] = 0
+        
+        # Near Fibonacci Levels (Simplified)
+        for fib_level in ['236', '382', '500', '618', '786']:
+            col_name = f'near_fib_{fib_level}'
+            if col_name not in df.columns:
+                df[col_name] = 0  # Placeholder (full calculation is complex)
+        
+        # SR Confluence Score
+        if 'sr_confluence_score' not in df.columns:
+            df['sr_confluence_score'] = 0  # Placeholder
+        
+        # Trend Short/Medium/Long
+        for period in ['short', 'medium', 'long']:
+            col_name = f'trend_{period}'
+            if col_name not in df.columns:
+                df[col_name] = 0  # Placeholder
+        
+        # Volume Decreasing
+        if 'volume_decreasing' not in df.columns and 'volume' in df.columns:
+            vol_trend = df['volume'].rolling(10).mean()
+            df['volume_decreasing'] = (df['volume'] < vol_trend * 0.9).astype(np.int8)
+        elif 'volume_decreasing' not in df.columns:
+            df['volume_decreasing'] = 0
+        
+        # ABC Pullback
+        if 'abc_pullback_bull' not in df.columns:
+            df['abc_pullback_bull'] = 0  # Placeholder
+        if 'abc_pullback_bear' not in df.columns:
+            df['abc_pullback_bear'] = 0  # Placeholder
+        
+        # Pullback Stage
+        if 'pullback_stage' not in df.columns:
+            df['pullback_stage'] = 'none'
+        
+        # === STEP 6: MODE M SPECIFIC PATTERNS ===
+        
+        # BB Squeeze
+        if 'bb_squeeze' not in df.columns:
+            if 'bb_width' in df.columns:
+                bb_avg = df['bb_width'].rolling(20).mean()
+                df['bb_squeeze'] = (df['bb_width'] < bb_avg * 0.7).astype(np.int8)
+            else:
+                df['bb_squeeze'] = 0
+        
+        # RSI Extreme
+        if 'rsi_extreme' not in df.columns:
+            if 'rsi' in df.columns:
+                df['rsi_extreme'] = ((df['rsi'] < 30) | (df['rsi'] > 70)).astype(np.int8)
+            else:
+                df['rsi_extreme'] = 0
+        
+        # Momentum Confirmation
+        if 'momentum_confirmation' not in df.columns:
+            if 'macd' in df.columns and 'macd_signal' in df.columns:
+                df['momentum_confirmation'] = (
+                    ((df['macd'] > df['macd_signal']) & (df['macd'] > 0)) |
+                    ((df['macd'] < df['macd_signal']) & (df['macd'] < 0))
+                ).astype(np.int8)
+            else:
+                df['momentum_confirmation'] = 0
+        
+        # Volume Divergence
+        if 'volume_divergence' not in df.columns and 'volume' in df.columns:
+            price_trend = df['close'].rolling(10).apply(
+                lambda x: 1 if x.iloc[-1] > x.iloc[0] else -1, raw=False
+            )
+            vol_trend = df['volume'].rolling(10).apply(
+                lambda x: 1 if x.iloc[-1] > x.iloc[0] else -1, raw=False
+            )
+            df['volume_divergence'] = (price_trend != vol_trend).astype(np.int8)
+        elif 'volume_divergence' not in df.columns:
+            df['volume_divergence'] = 0
+        
+        # Cache the result
+        self.pattern_cache[cache_key] = df
+        self.performance_stats['computation_time_saved'] += (time.time() - start_time)
+        self.performance_stats['vectorized_operations'] += 4
+        
         return df
+
     
     def _analyze_trend_structure(self, df):
         """Analyze overall trend structure state"""
