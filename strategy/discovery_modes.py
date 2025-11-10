@@ -3103,7 +3103,24 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 ('N', getattr(self, 'discover_mtf_strategies_mode_n', lambda *args: [])),
                 ('COMBO', self.discover_mtf_strategies_mode_combo),
                 ('Confluence', self.discover_mtf_strategies_mode_confluence)
-            ]:
+            ]:                
+                try:
+                    # Modes K, M, N need their setup configs passed
+                    if mode_label == 'K':
+                        res = mode_fn(group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf, self.MODE_K_SETUPS)
+                    elif mode_label == 'M':
+                        res = mode_fn(group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf, self.MODE_M_SETUPS)
+                    elif mode_label == 'N':
+                        res = mode_fn(group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf, self.MODE_N_SETUPS)
+                    else:
+                        res = mode_fn(group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf)
+                    
+                    strategy_results[mode_label] = res if res is not None else []
+                except Exception as e:
+                    print(f"  ! Mode {mode_label} failed for {group_name}: {e}")
+                    #print(f"  ! Mode {mode_label} failed for {group_name}: {e}\n{traceback.format_exc()}") # Added full traceback
+                    strategy_results[mode_label] = []
+
                 try:
                     # Each mode may internally fetch dataframes again; but because we cached the
                     # computed HTF/TTF/LTF above, modes can (optionally) reuse those to guarantee HTF-first logic.
