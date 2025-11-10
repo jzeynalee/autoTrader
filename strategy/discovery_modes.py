@@ -2374,138 +2374,319 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
     # ============================================================================
     # MODE N: MOMENTUM CASCADE STRATEGIES
     # ============================================================================
-
-    def discover_mtf_strategies_mode_n(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
-            """
-            Mode N: Momentum Cascade Strategies
-            Momentum that flows from HTF → TTF → LTF with confirmation.
-            Receives dataframes as arguments to prevent redundant loads.
-            """
-            print(f"  Discovering Mode N (Momentum Cascade) strategies for {group_name}...")
-      
-            if htf_df is None:
-                return []
-            
-            strategies = []
-            
-            # Analyze momentum cascade across timeframes
-            momentum_cascade = self._analyze_momentum_cascade(htf_df, ttf_df, ltf_df)
-            
-            # Define momentum cascade patterns
-            cascade_patterns = {
-                'bullish_momentum_cascade': {
-                    'description': 'Bullish momentum flowing from HTF to LTF',
-                    'required_flow': 'htf_to_ltf',
-                    'momentum_strength': 'strong',
-                    'signals': {
-                        'htf': ['trend_structure'],
-                        'ttf': ['pullback_complete_bull'],
-                        'ltf': ['structure_break_bullish']
-                    },
-                    'cascade_requirements': {
-                        'htf_momentum': 'bullish',
-                        'ttf_momentum': 'bullish', 
-                        'ltf_momentum': 'bullish',
-                    }
-                },
-                'bearish_momentum_cascade': {
-                    'description': 'Bearish momentum flowing from HTF to LTF',
-                    'required_flow': 'htf_to_ltf',
-                    'momentum_strength': 'strong',
-                    'signals': {
-                        'htf': ['trend_structure'],
-                        'ttf': ['pullback_complete_bear'],
-                        'ltf': ['structure_break_bearish']
-                    },
-                    'cascade_requirements': {
-                        'htf_momentum': 'bearish',
-                        'ttf_momentum': 'bearish',
-                        'ltf_momentum': 'bearish',
-                    }
-                },
+    MODE_N_SETUPS = {
+        'momentum_cascade_bull': {
+            'description': 'Bullish momentum flowing from HTF → TTF → LTF',
+            'required_flow': 'htf_to_ltf',
+            'momentum_strength': 'strong',
+            'htf': {
+                'primary': ['trend_structure', 'higher_highs'],
+                'fallback': ['ema_50', 'adx']
+            },
+            'ttf': {
+                'primary': ['momentum_continuation', 'pullback_complete_bull'],
+                'fallback': ['macd', 'rsi']
+            },
+            'ltf': {
+                'primary': ['structure_break_bullish', 'momentum_divergence_bullish'],
+                'fallback': ['momentum_continuation', 'volume_breakout']
+            },
+            'cascade_requirements': {
+                'htf_momentum': 'bullish',
+                'ttf_momentum': 'bullish',
+                'ltf_momentum': 'bullish'
+            },
+            'bonus_multiplier': 1.2,
+            'strategy_class': 'momentum_cascade'
+        },
+        
+        'momentum_cascade_bear': {
+            'description': 'Bearish momentum flowing from HTF → TTF → LTF',
+            'required_flow': 'htf_to_ltf',
+            'momentum_strength': 'strong',
+            'htf': {
+                'primary': ['trend_structure', 'lower_lows'],
+                'fallback': ['ema_50', 'adx']
+            },
+            'ttf': {
+                'primary': ['momentum_continuation', 'pullback_complete_bear'],
+                'fallback': ['macd', 'rsi']
+            },
+            'ltf': {
+                'primary': ['structure_break_bearish', 'momentum_divergence_bearish'],
+                'fallback': ['momentum_continuation', 'volume_breakout']
+            },
+            'cascade_requirements': {
+                'htf_momentum': 'bearish',
+                'ttf_momentum': 'bearish',
+                'ltf_momentum': 'bearish'
+            },
+            'bonus_multiplier': 1.2,
+            'strategy_class': 'momentum_cascade'
+        },
+        
+        'momentum_acceleration_bull': {
+            'description': 'Momentum accelerating across timeframes (Bullish)',
+            'required_flow': 'accelerating',
+            'momentum_strength': 'increasing',
+            'htf': {
+                'primary': ['trend_structure', 'market_structure'],
+                'fallback': ['adx', 'ema_50']
+            },
+            'ttf': {
+                'primary': ['momentum_continuation', 'structure_break_bullish'],
+                'fallback': ['macd', 'momentum_divergence_bullish']
+            },
+            'ltf': {
+                'primary': ['volume_breakout', 'momentum_continuation'],
+                'fallback': ['volume_breakout_confirmation', 'rsi']
+            },
+            'cascade_requirements': {
+                'htf_momentum': 'bullish',
+                'ttf_momentum': 'bullish',
+                'ltf_momentum': 'bullish'
+            },
+            'bonus_multiplier': 1.15,
+        'strategy_class': 'adaptive_multi_regime'
+    },
+    
+    'universal_momentum_bear': {
+        'description': 'Adaptive momentum capture for multiple market regimes (Bearish)',
+        'regime_compatible': ['trending', 'ranging', 'transition'],
+        'htf': {
+            'primary': ['trend_structure', 'market_structure'],
+            'fallback': ['ema_50', 'adx']
+        },
+        'ttf': {
+            'primary': ['momentum_continuation', 'structure_break_bearish'],
+            'fallback': ['macd', 'rsi']
+        },
+        'ltf': {
+            'primary': ['volume_breakout', 'momentum_divergence_bearish'],
+            'fallback': ['volume', 'stoch_k']
+        },
+        'regime_adaptations': {
+            'trending': {
+                'additional_filter': 'lower_lows',
+                'multiplier': 1.2
+            },
+            'ranging': {
+                'additional_filter': 'equal_highs_lows',
+                'multiplier': 0.8
+            },
+            'transition': {
+                'additional_filter': 'swing_failure',
+                'multiplier': 1.5
             }
+        },
+        'bonus_multiplier': 1.15,
+        'strategy_class': 'adaptive_multi_regime'
+        },
+        
+        'structure_breakout_adaptive_bull': {
+            'description': 'Breakout strategy that adapts to market regime (Bullish)',
+            'regime_compatible': ['trending', 'ranging', 'transition'],
+            'htf': {
+                'primary': ['equal_highs_lows', 'trend_structure'],
+                'fallback': ['bb_width', 'atr']
+            },
+            'ttf': {
+                'primary': ['structure_break_bullish', 'false_breakout_bearish'],
+                'fallback': ['swing_high', 'higher_highs']
+            },
+            'ltf': {
+                'primary': ['momentum_continuation', 'volume_breakout_confirmation'],
+                'fallback': ['rsi', 'volume']
+            },
+            'regime_adaptations': {
+                'trending': {
+                    'additional_filter': 'higher_highs',
+                    'multiplier': 1.1
+                },
+                'ranging': {
+                    'additional_filter': 'swing_low',
+                    'multiplier': 0.9
+                },
+                'transition': {
+                    'additional_filter': 'volume_divergence',
+                    'multiplier': 1.3
+                }
+            },
+            'bonus_multiplier': 1.1,
+            'strategy_class': 'adaptive_breakout'
+        },
+        
+        'structure_breakout_adaptive_bear': {
+            'description': 'Breakout strategy that adapts to market regime (Bearish)',
+            'regime_compatible': ['trending', 'ranging', 'transition'],
+            'htf': {
+                'primary': ['equal_highs_lows', 'trend_structure'],
+                'fallback': ['bb_width', 'atr']
+            },
+            'ttf': {
+                'primary': ['structure_break_bearish', 'false_breakout_bullish'],
+                'fallback': ['swing_low', 'lower_lows']
+            },
+            'ltf': {
+                'primary': ['momentum_continuation', 'volume_breakout_confirmation'],
+                'fallback': ['rsi', 'volume']
+            },
+            'regime_adaptations': {
+                'trending': {
+                    'additional_filter': 'lower_lows',
+                    'multiplier': 1.1
+                },
+                'ranging': {
+                    'additional_filter': 'swing_high',
+                    'multiplier': 0.9
+                },
+                'transition': {
+                    'additional_filter': 'volume_divergence',
+                    'multiplier': 1.3
+                }
+            },
+            'bonus_multiplier': 1.1,
+            'strategy_class': 'adaptive_breakout'
+        }
+    }
+    def discover_mtf_strategies_mode_n(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf, MODE_N_SETUPS):
+        """
+        Mode N: Momentum Cascade Strategies
+        Identifies momentum flowing from HTF → TTF → LTF with confirmation
+        """
+        print(f"  Discovering Mode N (Momentum Cascade) strategies for {group_name}...")
+        
+        if htf_df is None or ttf_df is None or ltf_df is None:
+            return []
+        
+        # Enhance dataframes
+        htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
+        ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
+        ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
+        
+        strategies = []
+        
+        htf_pair_tf = f"{pair}_{htf_tf}"
+        ttf_pair_tf = f"{pair}_{ttf_tf}"
+        ltf_pair_tf = f"{pair}_{ltf_tf}"
+        
+        # Analyze momentum cascade
+        momentum_cascade = self._analyze_momentum_cascade(htf_df, ttf_df, ltf_df)
+        
+        current_flow = momentum_cascade.get('primary_flow_direction', 'unknown')
+        current_strength = momentum_cascade.get('momentum_strength', 'unknown')
+        
+        for setup_name, setup_config in MODE_N_SETUPS.items():
+            # Check if current momentum matches required pattern
+            required_flow = setup_config['required_flow']
+            required_strength = setup_config['momentum_strength']
             
-            htf_pair_tf = f"{pair}_{htf_tf}"
-            ttf_pair_tf = f"{pair}_{ttf_tf}"
-            ltf_pair_tf = f"{pair}_{ltf_tf}"
-
-            current_flow = momentum_cascade['primary_flow_direction']
-            current_strength = momentum_cascade['momentum_strength']
+            # Flexible matching for flow patterns
+            flow_matches = (
+                (required_flow == 'htf_to_ltf' and current_flow in ['htf_to_ltf', 'cascading']) or
+                (required_flow == 'accelerating' and current_strength == 'increasing') or
+                (required_flow == 'reversal' and current_flow == 'reversal')
+            )
             
-            for pattern_name, pattern_config in cascade_patterns.items():
-                if (pattern_config['required_flow'] != current_flow or 
-                    pattern_config['momentum_strength'] != current_strength):
-                    continue
-                    
-                direction = 'bullish' if 'bullish' in pattern_name else 'bearish'
+            if not flow_matches:
+                continue
+            
+            direction = 'bullish' if 'bull' in setup_name else 'bearish'
+            
+            # Build mask
+            final_mask = pd.Series(True, index=ltf_df.index)
+            used_signals = {'htf': [], 'ttf': [], 'ltf': []}
+            
+            for tf_label, df, pair_tf_str in [
+                ('htf', htf_df, htf_pair_tf),
+                ('ttf', ttf_df, ttf_pair_tf),
+                ('ltf', ltf_df, ltf_pair_tf)
+            ]:
+                signals_config = setup_config[tf_label]
                 
-                # Check cascade requirements
-                requirements_met = True
-                
-                # --- START OF THE FIX ---
-                # The original loop was flawed and used the wrong key
-                reqs = pattern_config['cascade_requirements']
-                
-                if 'htf_momentum' in reqs and reqs['htf_momentum'] != momentum_cascade['htf_momentum']:
-                    requirements_met = False
-                if 'ttf_momentum' in reqs and reqs['ttf_momentum'] != momentum_cascade['ttf_momentum']:
-                    requirements_met = False
-                if 'ltf_momentum' in reqs and reqs['ltf_momentum'] != momentum_cascade['ltf_momentum']:
-                    requirements_met = False
-                # --- END OF THE FIX ---
-                
-                if not requirements_met:
-                    continue
-                
-                # Get signal states
-                cascade_mask = pd.Series(True, index=ltf_df.index)
-                
-                for tf, signals in pattern_config['signals'].items():
-                    df = htf_df if tf == 'htf' else ttf_df if tf == 'ttf' else ltf_df
-                    current_pair_tf = htf_pair_tf if tf == 'htf' else (ttf_pair_tf if tf == 'ttf' else ltf_pair_tf)
-                    
-                    for signal in signals:
+                for signal_list in [signals_config['primary'], signals_config['fallback']]:
+                    signal_found = False
+                    for signal in signal_list:
                         if signal in df.columns:
-                            states = self.get_or_compute_states(df, signal, current_pair_tf)
+                            states = self.get_or_compute_states(df, signal, pair_tf_str)
                             if states is not None:
+                                states_aligned = states.reindex(final_mask.index, fill_value='neutral')
+                                
                                 if direction == 'bullish':
-                                    cascade_mask &= (states == 'bullish')
+                                    mask = (states_aligned == 'bullish') | (states_aligned == 1)
                                 else:
-                                    cascade_mask &= (states == 'bearish')
-                
-                if cascade_mask.sum() > 5:
-                    aligned_returns = ltf_df.loc[cascade_mask, 'future_return']
+                                    mask = (states_aligned == 'bearish') | (states_aligned == -1)
+                                
+                                final_mask &= mask
+                                used_signals[tf_label].append(signal)
+                                signal_found = True
+                                break
                     
-                    if direction == 'bullish':
-                        win_rate = (aligned_returns > 0).mean()
-                    else:
-                        win_rate = (aligned_returns < 0).mean()
-                    
-                    # Use the 0.51 threshold
-                    if win_rate > 0.51:
-                        strategies.append({
-                            'type': 'mtf_mode_n', 
-                            "signal_type": "MTF_COMPOSITE",
-                            'group': group_name,
-                            'pair_tf': f"{pair}_{ltf_tf}",
-                            'direction': direction,
-                            'trade_direction': 'long' if direction == 'bullish' else 'short',
-                            'pattern_name': pattern_name,
-                            'description': pattern_config['description'],
-                            'momentum_flow': current_flow,
-                            'momentum_strength': current_strength,
-                            'cascade_score': momentum_cascade['cascade_score'],
-                            'signals': pattern_config['signals'],
-                            'htf_timeframe': htf_tf,
-                            'ttf_timeframe': ttf_tf,
-                            'ltf_timeframe': ltf_tf,
-                            'discovered_accuracy': win_rate,
-                            'sample_size': int(cascade_mask.sum()),
-                            'performance_score': win_rate * (1 + momentum_cascade['cascade_score'] / 100),
-                            'strategy_class': 'momentum_cascade'
-                        })
+                    if signal_found:
+                        break
             
-            return strategies
+            # Verify cascade requirements (momentum alignment across TFs)
+            cascade_reqs = setup_config['cascade_requirements']
+            cascade_valid = True
+            
+            # Check HTF momentum
+            htf_mom_req = cascade_reqs.get('htf_momentum', 'bullish')
+            htf_mom_actual = momentum_cascade.get('htf_momentum', 'neutral')
+            if htf_mom_req != 'neutral' and htf_mom_actual != htf_mom_req:
+                cascade_valid = False
+            
+            # Check TTF momentum
+            ttf_mom_req = cascade_reqs.get('ttf_momentum', 'bullish')
+            ttf_mom_actual = momentum_cascade.get('ttf_momentum', 'neutral')
+            if ttf_mom_req != 'neutral' and ttf_mom_actual != ttf_mom_req:
+                cascade_valid = False
+            
+            # Check LTF momentum
+            ltf_mom_req = cascade_reqs.get('ltf_momentum', 'bullish')
+            ltf_mom_actual = momentum_cascade.get('ltf_momentum', 'neutral')
+            if ltf_mom_req != 'neutral' and ltf_mom_actual != ltf_mom_req:
+                cascade_valid = False
+            
+            if not cascade_valid:
+                continue
+            
+            # Relaxed thresholds for momentum cascade
+            if final_mask.sum() >= 5:
+                aligned_returns = ltf_df.loc[final_mask, 'future_return']
+                
+                if direction == 'bullish':
+                    win_rate = (aligned_returns > 0).mean()
+                else:
+                    win_rate = (aligned_returns < 0).mean()
+                
+                if win_rate >= 0.48:  # Lower threshold for cascade strategies
+                    cascade_score = momentum_cascade.get('cascade_score', 50)
+                    
+                    strategies.append({
+                        'type': 'mtf_mode_n',
+                        'signal_type': "MTF_COMPOSITE",
+                        'group': group_name,
+                        'pair_tf': f"{pair}_{ltf_tf}",
+                        'direction': direction,
+                        'trade_direction': 'long' if direction == 'bullish' else 'short',
+                        'setup_name': setup_name,
+                        'description': setup_config['description'],
+                        'momentum_flow': current_flow,
+                        'momentum_strength': current_strength,
+                        'cascade_score': cascade_score,
+                        'htf_signals': used_signals['htf'],
+                        'ttf_signals': used_signals['ttf'],
+                        'ltf_signals': used_signals['ltf'],
+                        'htf_timeframe': htf_tf,
+                        'ttf_timeframe': ttf_tf,
+                        'ltf_timeframe': ltf_tf,
+                        'discovered_accuracy': win_rate,
+                        'sample_size': int(final_mask.sum()),
+                        'performance_score': win_rate * setup_config['bonus_multiplier'] * (1 + cascade_score / 100),
+                        'strategy_class': setup_config['strategy_class']
+                    })
+        
+        return strategies
     
     def discover_mtf_strategies_mode_combo(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """
@@ -3077,3 +3258,152 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             nan_cols = df.columns[df.isna().any()].tolist()
             if nan_cols:
                 print(f"  ⚠️  Columns with NaN: {', '.join(nan_cols[:5])}")
+
+    # ============================================================================
+    # HELPER FUNCTIONS (Add to PatternsMixin or DiscoveryModesMixin)
+    # ============================================================================
+
+    def _identify_regime_contexts(self, htf_df, ttf_df, ltf_df):
+        """
+        Identify which regime contexts are present in the data
+        Returns: list of regime contexts ['trending', 'ranging', 'transition']
+        """
+        regimes_found = set()
+        
+        for df in [htf_df, ttf_df, ltf_df]:
+            if 'market_structure' in df.columns:
+                # Get last 20 bars to see current regime
+                recent_structure = df['market_structure'].tail(20)
+                
+                if (recent_structure == 'strong_trend').sum() > 10:
+                    regimes_found.add('trending')
+                if (recent_structure == 'trending').sum() > 10:
+                    regimes_found.add('trending')
+                if (recent_structure == 'ranging').sum() > 10:
+                    regimes_found.add('ranging')
+            
+            # Check for transitions (changing structure)
+            if 'trend_structure' in df.columns:
+                recent_trend = df['trend_structure'].tail(20)
+                unique_trends = recent_trend.nunique()
+                if unique_trends >= 3:  # Multiple trend states = transition
+                    regimes_found.add('transition')
+        
+        # If nothing found, assume all are possible
+        if not regimes_found:
+            regimes_found = {'trending', 'ranging', 'transition'}
+        
+        return list(regimes_found)
+
+
+    def _analyze_volatility_characteristics(self, df):
+        """
+        Analyze volatility regime of the dataframe
+        Returns: dict with volatility_regime ('high', 'normal', 'low')
+        """
+        volatility_analysis = {
+            'volatility_regime': 'normal_volatility',
+            'volatility_score': 50
+        }
+        
+        if 'atr' not in df.columns or len(df) < 50:
+            return volatility_analysis
+        
+        # Calculate ATR percentile
+        atr_values = df['atr'].tail(50)
+        current_atr = atr_values.iloc[-1]
+        atr_median = atr_values.median()
+        atr_std = atr_values.std()
+        
+        # Normalize ATR by price
+        current_price = df['close'].iloc[-1]
+        normalized_atr = current_atr / current_price
+        normalized_median = atr_median / current_price
+        normalized_std = atr_std / current_price
+        
+        # Classify volatility
+        if normalized_atr > normalized_median + normalized_std:
+            volatility_analysis['volatility_regime'] = 'high_volatility'
+            volatility_analysis['volatility_score'] = 75
+        elif normalized_atr < normalized_median - normalized_std:
+            volatility_analysis['volatility_regime'] = 'low_volatility'
+            volatility_analysis['volatility_score'] = 25
+        else:
+            volatility_analysis['volatility_regime'] = 'normal_volatility'
+            volatility_analysis['volatility_score'] = 50
+        
+        return volatility_analysis
+
+
+    def _analyze_momentum_cascade(self, htf_df, ttf_df, ltf_df):
+        """
+        Analyze momentum flow across timeframes
+        Returns: dict with momentum cascade characteristics
+        """
+        cascade_analysis = {
+            'primary_flow_direction': 'unknown',
+            'momentum_strength': 'unknown',
+            'htf_momentum': 'neutral',
+            'ttf_momentum': 'neutral',
+            'ltf_momentum': 'neutral',
+            'cascade_score': 0
+        }
+        
+        def get_momentum_direction(df):
+            """Determine momentum direction for a single timeframe"""
+            if 'rsi' not in df.columns or len(df) < 20:
+                return 'neutral'
+            
+            rsi_values = df['rsi'].tail(20)
+            rsi_trend = rsi_values.mean()
+            rsi_recent = rsi_values.tail(5).mean()
+            
+            # Check if momentum is bullish, bearish, or neutral
+            if rsi_recent > 55 and rsi_trend > 50:
+                return 'bullish'
+            elif rsi_recent < 45 and rsi_trend < 50:
+                return 'bearish'
+            else:
+                return 'neutral'
+        
+        # Get momentum for each timeframe
+        cascade_analysis['htf_momentum'] = get_momentum_direction(htf_df)
+        cascade_analysis['ttf_momentum'] = get_momentum_direction(ttf_df)
+        cascade_analysis['ltf_momentum'] = get_momentum_direction(ltf_df)
+        
+        # Determine cascade pattern
+        htf_mom = cascade_analysis['htf_momentum']
+        ttf_mom = cascade_analysis['ttf_momentum']
+        ltf_mom = cascade_analysis['ltf_momentum']
+        
+        # Perfect cascade: All aligned
+        if htf_mom == ttf_mom == ltf_mom and htf_mom != 'neutral':
+            cascade_analysis['primary_flow_direction'] = 'htf_to_ltf'
+            cascade_analysis['momentum_strength'] = 'strong'
+            cascade_analysis['cascade_score'] = 90
+        
+        # Good cascade: HTF and TTF aligned
+        elif htf_mom == ttf_mom and htf_mom != 'neutral':
+            cascade_analysis['primary_flow_direction'] = 'htf_to_ltf'
+            cascade_analysis['momentum_strength'] = 'moderate'
+            cascade_analysis['cascade_score'] = 70
+        
+        # Accelerating: TTF and LTF aligned, stronger than HTF
+        elif ttf_mom == ltf_mom and ttf_mom != 'neutral' and htf_mom == 'neutral':
+            cascade_analysis['primary_flow_direction'] = 'accelerating'
+            cascade_analysis['momentum_strength'] = 'increasing'
+            cascade_analysis['cascade_score'] = 75
+        
+        # Reversal: HTF opposite to TTF/LTF
+        elif htf_mom != 'neutral' and ttf_mom != 'neutral' and htf_mom != ttf_mom:
+            cascade_analysis['primary_flow_direction'] = 'reversal'
+            cascade_analysis['momentum_strength'] = 'reversing'
+            cascade_analysis['cascade_score'] = 65
+        
+        # Weak/No cascade
+        else:
+            cascade_analysis['primary_flow_direction'] = 'mixed'
+            cascade_analysis['momentum_strength'] = 'weak'
+            cascade_analysis['cascade_score'] = 40
+        
+        return cascade_analysis
