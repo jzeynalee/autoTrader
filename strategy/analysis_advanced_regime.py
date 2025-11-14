@@ -19,10 +19,12 @@ Architecture:
 
 import pandas as pd
 import numpy as np
+import uuid
+import warnings
+from scipy import stats
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
-import warnings
 
 # ML Libraries
 try:
@@ -501,57 +503,6 @@ class HybridSwingRegistry:
         
         return bullish_break or bearish_break
     
-    '''def _count_recent_patterns(self, df: pd.DataFrame, idx: int, pattern_type: str) -> int:
-        """Count recent candlestick patterns of given type."""
-        if idx < 5:
-            return 0
-        
-        count = 0
-        recent_window = df.iloc[max(0, idx-5):idx+1]
-        
-        if pattern_type == 'bullish':
-            patterns = ['pattern_hammer', 'pattern_bullish_engulfing', 'pattern_morning_star',
-                       'pattern_piercing_line', 'pattern_inverted_hammer']
-        elif pattern_type == 'bearish':
-            patterns = ['pattern_shooting_star', 'pattern_bearish_engulfing', 'pattern_evening_star',
-                       'pattern_dark_cloud_cover', 'pattern_hanging_man']
-        elif pattern_type == 'doji':
-            patterns = ['pattern_doji', 'pattern_dragonfly_doji', 'pattern_gravestone_doji',
-                       'pattern_long_legged_doji']
-        else:
-            return 0
-        
-        for pattern in patterns:
-            if pattern in df.columns:
-                count += (recent_window[pattern] == 1).sum()
-        
-        return count'''
-    
-    '''def _calculate_gap_intensity(self, df: pd.DataFrame, idx: int) -> float:
-        """Calculate gap size as % of price."""
-        if idx < 1:
-            return 0.0
-        
-        gap = df['open'].iloc[idx] - df['close'].iloc[idx-1]
-        return abs(gap) / df['close'].iloc[idx-1] if df['close'].iloc[idx-1] != 0 else 0.0
-    
-    def _calculate_extended_bar_ratio(self, df: pd.DataFrame, idx: int) -> float:
-        """Ratio of current bar range to ATR."""
-        current_range = df['high'].iloc[idx] - df['low'].iloc[idx]
-        atr = self._get_safe_value(df, idx, 'atr', default=current_range)
-        
-        return current_range / atr if atr != 0 else 1.0'''
-    
-    '''def _detect_volume_spike(self, df: pd.DataFrame, idx: int) -> bool:
-        """Detect if volume is significantly above average."""
-        if idx < 20 or 'volume' not in df.columns:
-            return False
-        
-        recent_vol = df['volume'].iloc[idx-20:idx].mean()
-        current_vol = df['volume'].iloc[idx]
-        
-        return current_vol > (recent_vol * 2.0)  # 2x average = spike'''
-    
     def to_dataframe(self) -> pd.DataFrame:
         """Convert registry to pandas DataFrame for ML."""
         records = []
@@ -592,11 +543,15 @@ class HybridSwingRegistry:
                 'hmm_regime': swing.hmm_regime,
                 'hmm_probability': swing.hmm_probability,
                 'predicted_regime': swing.predicted_regime,
-                'prediction_confidence': swing.prediction_confidence
+                'prediction_confidence': swing.prediction_confidence,
+                # NEW: Regime instance metadata
+                'regime_instance_id': getattr(swing, 'regime_instance_id', None),
+                'regime_instance_index': getattr(swing, 'regime_instance_index', None)
             }
             records.append(record)
         
         return pd.DataFrame(records)
+
 
 
 # ============================================================================
@@ -1111,6 +1066,21 @@ class AdvancedRegimeDetectionSystem:
         else:
             print("  ⚠️ Skipping HMM (insufficient data or library unavailable)")
             hmm_labels = np.zeros(len(swing_df), dtype=int)
+
+        # === NEW PHASE: compute regime instances (adaptive clustering) ===
+        try:
+            swing_df = self.registry.to_dataframe()
+            swing_df = self._compute_regime_instances(swing_df)
+            # apply back to registry.swings so objects carry instance ids
+            id_map = dict()
+            for idx, row in swing_df.iterrows():
+                key = (int(row['index']),)  # unique by swing.index
+                id_map[int(row['index'])] = row.get('regime_instance_id')
+            for swing in self.registry.swings:
+                swing.regime_instance_id = id_map.get(swing.index, None)
+        except Exception as e:
+            print(f"  ⚠️ Regime instance computation failed: {e}")
+            # continue without instances
         
         # === PHASE 4: XGBoost Prediction ===
         if XGB_AVAILABLE and len(swing_df) >= 50:
@@ -1139,7 +1109,7 @@ class AdvancedRegimeDetectionSystem:
             print("  ⚠️ Skipping XGBoost (insufficient data or library unavailable)")
         
         # === PHASE 5: Map Regimes to DataFrame ===
-        print("  📈 Mapping regimes to dataframe...")
+        print("  📈 Mapping regimes + instances to dataframe...")
         df_analysis = self._map_regimes_to_dataframe(df_analysis, swing_df, hmm_labels)
         
         # === PHASE 6: Generate Legacy Columns for Compatibility ===
@@ -1272,6 +1242,108 @@ class AdvancedRegimeDetectionSystem:
         swing_df = self.registry.to_dataframe()
         swing_df.to_csv(filename, index=False)
         print(f"✅ Swing registry exported to {filename}")
+
+    def _compute_regime_instances(self, swing_df: pd.DataFrame, min_instance_length: int = 3, z_threshold: float = 1.0) -> pd.DataFrame:
+        """
+        Adaptive segmentation within each HMM regime segment.
+        Strategy (Option 3):
+         - For each contiguous block of the same hmm_regime, inspect the sequence of
+           atr_ratio and local_slope (or other metrics).
+         - Compute z-scores for atr_ratio and local_slope inside the block.
+         - If z-scores cross the threshold (abs > z_threshold) persistently for > min_instance_length,
+           mark a cut and start a new instance.
+         - Output: swing_df with a new column 'regime_instance_id' (string) and 'regime_instance_index' (int)
+        """
+        if 'hmm_regime' not in swing_df.columns:
+            swing_df['regime_instance_id'] = None
+            swing_df['regime_instance_index'] = -1
+            return swing_df
+
+        swing_df = swing_df.reset_index(drop=True)
+        swing_df['regime_instance_id'] = None
+        swing_df['regime_instance_index'] = -1
+
+        # helper to create instance id
+        def _new_instance_name(regime_label, counter):
+            return f"R{int(regime_label)}_I{counter}"
+
+        i = 0
+        while i < len(swing_df):
+            regime_label = swing_df.at[i, 'hmm_regime']
+            # gather contiguous block
+            j = i
+            while j < len(swing_df) and swing_df.at[j, 'hmm_regime'] == regime_label:
+                j += 1
+            block = swing_df.iloc[i:j].copy()
+            if len(block) == 0:
+                i = j
+                continue
+
+            # compute zscores safely (fallback to simple normalization if nan)
+            atr = block.get('atr_ratio', pd.Series(np.zeros(len(block))))
+            slope = block.get('local_slope', pd.Series(np.zeros(len(block))))
+            try:
+                atr_z = stats.zscore(atr.fillna(0).astype(float))
+                slope_z = stats.zscore(slope.fillna(0).astype(float))
+            except Exception:
+                # fallback: manual zscore
+                def _z(a):
+                    a = np.asarray(a, dtype=float)
+                    m = np.nanmean(a); s = np.nanstd(a)
+                    return (a - m) / (s if s != 0 else 1.0)
+                atr_z = _z(atr)
+                slope_z = _z(slope)
+
+            # combine signals: mark change points where either absolute zscore exceeds threshold
+            change_points = np.zeros(len(block), dtype=bool)
+            for k in range(len(block)):
+                if (abs(atr_z[k]) > z_threshold) or (abs(slope_z[k]) > z_threshold):
+                    change_points[k] = True
+
+            # convert change_points into instance segments: require persistence for min_instance_length
+            # algorithm: walk block; start new instance at block start; if a run of 'change_points' of length >= min_instance_length,
+            # cut before that run.
+            instance_counter = 0
+            seg_start = 0
+            k = 0
+            while k < len(block):
+                # look ahead for persistent change
+                if change_points[k]:
+                    # find length of this run
+                    run_start = k
+                    while k < len(block) and change_points[k]:
+                        k += 1
+                    run_len = k - run_start
+                    if run_len >= min_instance_length and run_start != 0:
+                        # create instance for [seg_start:run_start)
+                        inst_name = _new_instance_name(regime_label, instance_counter)
+                        idxs = block.index[seg_start:run_start].tolist()
+                        swing_df.loc[idxs, 'regime_instance_id'] = inst_name
+                        swing_df.loc[idxs, 'regime_instance_index'] = instance_counter
+                        instance_counter += 1
+                        seg_start = run_start
+                    # continue scanning
+                else:
+                    k += 1
+
+            # final segment
+            if seg_start < len(block):
+                inst_name = _new_instance_name(regime_label, instance_counter)
+                idxs = block.index[seg_start:len(block)].tolist()
+                swing_df.loc[idxs, 'regime_instance_id'] = inst_name
+                swing_df.loc[idxs, 'regime_instance_index'] = instance_counter
+                instance_counter += 1
+
+            # move to next block
+            i = j
+
+        # If any swings still None (edge cases), give them single-instance names
+        for idx in swing_df[swing_df['regime_instance_id'].isnull()].index:
+            rid = swing_df.at[idx, 'hmm_regime']
+            swing_df.at[idx, 'regime_instance_id'] = _new_instance_name(rid, 0)
+            swing_df.at[idx, 'regime_instance_index'] = 0
+
+        return swing_df
 
 
 # ============================================================================

@@ -150,14 +150,13 @@ class RegimeStrategyDiscovery:
         self.strategy_repository: Dict[int, Dict] = {}  # Changed key type to int
         print("✅ RegimeStrategyDiscovery initialized.")
 
-    def discover_strategies(self) -> Dict[int, Dict]:
+    def discover_strategies(self) -> Dict[str, Dict]:
         """
-        Analyzes the HybridSwingRegistry and builds the strategy repository.
-        
+        Analyzes the HybridSwingRegistry and builds the strategy repository per *regime instance*.
         Returns:
-            Dict[int, Dict]: The completed strategy repository keyed by regime_id.
+            Dict[str, Dict]: mapping regime_instance_id -> playbook metadata
         """
-        print("  Discovering strategy playbook...")
+        print("  Discovering strategy playbook (instance-level)...")
         
         swing_df = self.regime_system.registry.to_dataframe()
         
@@ -165,58 +164,97 @@ class RegimeStrategyDiscovery:
             print("  ⚠️ 'hmm_regime' column not found in swing registry. Run HMM first.")
             return {}
         
-        # Initialize temp repository using regime_id as key (FIXED)
-        temp_repository: Dict[int, Dict[str, Set]] = {}
-        for regime_id, state in self.regime_states_map.items():
-            temp_repository[regime_id] = {  # Use regime_id, not state.name
-                'confirming_indicators': set(),
-                'strategy_patterns': set()
-            }
+        # Prefer instance-level key if available
+        if 'regime_instance_id' in swing_df.columns:
+            keys = swing_df['regime_instance_id'].fillna('UNKN').unique().tolist()
+        else:
+            # fallback to regime ids as strings
+            keys = swing_df['hmm_regime'].fillna(-1).unique().astype(int).tolist()
+            keys = [f"R{k}" for k in keys]
 
-        # Iterate over swings and accumulate confirmations
-        for _, row in swing_df.iterrows():
-            regime_id = row['hmm_regime']
-            
-            if regime_id is None or pd.isna(regime_id):
-                continue
-                
-            regime_id = int(regime_id)
-            regime_state = self.regime_states_map.get(regime_id)
-            
-            if not regime_state:
-                continue
-            
-            repo_entry = temp_repository[regime_id]  # Use regime_id (FIXED)
-            
-            # Get confirmations based on trend direction
-            indicators: List[str] = []
-            patterns: List[str] = []
-            
-            if regime_state.trend_direction == 'bull':
-                indicators, patterns = self.indicator_rules.get_bullish_confirmations(row)
-            elif regime_state.trend_direction == 'bear':
-                indicators, patterns = self.indicator_rules.get_bearish_confirmations(row)
-            elif regime_state.trend_direction == 'neutral':
-                indicators, patterns = self.indicator_rules.get_ranging_confirmations(row)
-            
-            repo_entry['confirming_indicators'].update(indicators)
-            repo_entry['strategy_patterns'].update(patterns)
-
-        # Build final repository with metadata
-        self.strategy_repository = {}
-        for regime_id, state in self.regime_states_map.items():
-            temp_entry = temp_repository[regime_id]  # Use regime_id (FIXED)
-            self.strategy_repository[regime_id] = {
-                'regime_id': regime_id,
-                'regime_name': state.name,  # Store name as metadata
-                'trend_direction': state.trend_direction,
-                'volatility_level': state.volatility_level,
-                'confirming_indicators': sorted(list(temp_entry['confirming_indicators'])),
-                'strategy_patterns': sorted(list(temp_entry['strategy_patterns']))
-            }
+        # initialize temp repository per instance
+        temp_repository: Dict[str, Dict[str, Set]] = {}
+        # also store mapping to regime type metadata
+        instance_meta: Dict[str, Dict] = {}
         
-        print("  ✅ Strategy playbook discovery complete.")
+        # Build initial entries based on present instances
+        if 'regime_instance_id' in swing_df.columns:
+            for inst in keys:
+                temp_repository[inst] = {
+                    'confirming_indicators': set(),
+                    'strategy_patterns': set()
+                }
+        else:
+            for inst in keys:
+                temp_repository[inst] = {
+                    'confirming_indicators': set(),
+                    'strategy_patterns': set()
+                }
+
+        # Iterate swings and assign to instance buckets
+        for _, row in swing_df.iterrows():
+            inst_key = None
+            if 'regime_instance_id' in swing_df.columns and pd.notna(row.get('regime_instance_id')):
+                inst_key = row['regime_instance_id']
+            elif pd.notna(row.get('hmm_regime')):
+                inst_key = f"R{int(row['hmm_regime'])}"
+            else:
+                continue
+
+            # ensure present
+            if inst_key not in temp_repository:
+                temp_repository[inst_key] = {
+                    'confirming_indicators': set(),
+                    'strategy_patterns': set()
+                }
+
+            regime_id = None
+            if 'hmm_regime' in row and pd.notna(row['hmm_regime']):
+                regime_id = int(row['hmm_regime'])
+            regime_state = self.regime_states_map.get(regime_id) if regime_id is not None else None
+
+            # choose confirmation logic based on regime_state trend; if missing, use heuristics
+            indicators, patterns = [], []
+            if regime_state:
+                if regime_state.trend_direction == 'bull':
+                    indicators, patterns = self.indicator_rules.get_bullish_confirmations(row)
+                elif regime_state.trend_direction == 'bear':
+                    indicators, patterns = self.indicator_rules.get_bearish_confirmations(row)
+                else:
+                    indicators, patterns = self.indicator_rules.get_ranging_confirmations(row)
+            else:
+                # fallback: use neutral thresholds
+                indicators, patterns = self.indicator_rules.get_ranging_confirmations(row)
+
+            temp_repository[inst_key]['confirming_indicators'].update(indicators)
+            temp_repository[inst_key]['strategy_patterns'].update(patterns)
+
+            # store instance meta if not already
+            if inst_key not in instance_meta:
+                instance_meta[inst_key] = {
+                    'regime_type': regime_id,
+                    'regime_name': (self.regime_states_map.get(regime_id).name if regime_id in self.regime_states_map else f"R{regime_id}"),
+                    'trend_direction': (self.regime_states_map.get(regime_id).trend_direction if regime_id in self.regime_states_map else 'unknown'),
+                    'volatility_level': (self.regime_states_map.get(regime_id).volatility_level if regime_id in self.regime_states_map else 'unknown'),
+                }
+
+        # Build final repository keyed by instance_id
+        self.strategy_repository = {}
+        for inst_key, sets in temp_repository.items():
+            meta = instance_meta.get(inst_key, {})
+            self.strategy_repository[inst_key] = {
+                'regime_instance_id': inst_key,
+                'regime_type': meta.get('regime_type'),
+                'regime_name': meta.get('regime_name'),
+                'trend_direction': meta.get('trend_direction', 'unknown'),
+                'volatility_level': meta.get('volatility_level', 'unknown'),
+                'confirming_indicators': sorted(list(sets['confirming_indicators'])),
+                'strategy_patterns': sorted(list(sets['strategy_patterns']))
+            }
+
+        print("  ✅ Strategy playbook discovery (instance-level) complete.")
         return self.strategy_repository
+
 
     def get_repository(self) -> Dict[int, Dict]:
         """Returns the last built strategy repository."""

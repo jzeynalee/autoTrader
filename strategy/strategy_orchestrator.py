@@ -156,31 +156,31 @@ def run_strategy_discovery(db_connector):
                 print(f"  ⚠️  Failed to save temporary playbook JSON: {e}")
 
             # --- Permanent Database Solution ---
-            print("  💾 Persisting playbook to database...")
+            print("  💾 Persisting instance-level playbook to database...")
             if db_connector:
-                table_name = 'strategy_playbook'
                 rows_upserted = 0
-                for regime_id_key, data in strategy_playbook.items():
+                for inst_key, data in strategy_playbook.items():
                     try:
-                        # Prepare data for DB (serialize lists/sets)
                         db_record = {
-                            #'regime_id': regime_id,  # Use regime_id as primary key
-                            'regime_name': data.get('regime_name'),  # Get name from data
-                            'regime_id': data.get('regime_id'),
+                            'regime_instance_id': data.get('regime_instance_id', inst_key),
+                            'regime_type': data.get('regime_type'),
+                            'regime_name': data.get('regime_name'),
                             'trend_direction': data.get('trend_direction'),
                             'volatility_level': data.get('volatility_level'),
-                            # Store lists as JSON strings
                             'confirming_indicators_json': json.dumps(data.get('confirming_indicators', [])),
                             'strategy_patterns_json': json.dumps(data.get('strategy_patterns', [])),
                             'last_updated': datetime.now()
                         }
-                        
-                        db_connector.upsert_strategy_playbook(db_record)
+                        # DB connector must implement upsert_strategy_playbook_instance or reuse previous function
+                        if hasattr(db_connector, 'upsert_strategy_playbook_instance'):
+                            db_connector.upsert_strategy_playbook_instance(db_record)
+                        else:
+                            # fallback to old method which expects regime_id - adapt if needed
+                            db_connector.upsert_strategy_playbook(db_record)
                         rows_upserted += 1
-                        
                     except Exception as e:
-                        print(f"  ⚠️  Failed to upsert regime '{regime_name}' to DB: {e}")
-                print(f"  ✅ Successfully upserted {rows_upserted} regime playbooks to DB.")
+                        print(f"  ⚠️  Failed to upsert instance '{inst_key}' to DB: {e}")
+                print(f"  ✅ Successfully upserted {rows_upserted} regime-instance playbooks to DB.")
             else:
                 print("  ⚠️  No db_connector found. Skipping database persistence.")
 
