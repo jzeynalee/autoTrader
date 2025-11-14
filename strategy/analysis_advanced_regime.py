@@ -171,6 +171,22 @@ class ZigZagSwingExtractor:
         """
         self.atr_multiplier = atr_multiplier
         self.min_bars = min_bars
+
+    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Average True Range."""
+        high = df['high']
+        low = df['low']
+        close = df['close']
+        
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period, min_periods=1).mean()
+        
+        return atr
+
     
     def extract_swings(self, df: pd.DataFrame) -> List[Dict]:
         """
@@ -229,21 +245,6 @@ class ZigZagSwingExtractor:
                     last_swing_idx = i
         
         return swings
-    
-    '''def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate Average True Range."""
-        high = df['high']
-        low = df['low']
-        close = df['close']
-        
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=period, min_periods=1).mean()
-        
-        return atr'''
 
 
 # ============================================================================

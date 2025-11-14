@@ -954,7 +954,6 @@ class FeatureEngineerOptimized:
         cols['bars_since_swing_low'] = row_numbers - swing_low_row
         
         # ABC patterns (simplified)  
-        #       
         def detect_abc_pullback(df, window=20):
             """
             Detect ABC pullback pattern:

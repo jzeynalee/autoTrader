@@ -367,6 +367,18 @@ def create_mock_indicator_data(length: int) -> pd.DataFrame:
 
 if __name__ == "__main__":
     
+    # Import the availability flags from the analysis module
+    try:
+        from analysis_advanced_regime import HMM_AVAILABLE, XGB_AVAILABLE, SKLEARN_AVAILABLE
+    except ImportError:
+        print("Warning: Could not import availability flags from 'analysis_advanced_regime'.")
+        print("Assuming libraries are not available for the example.")
+        HMM_AVAILABLE = False
+        XGB_AVAILABLE = False
+        SKLEARN_AVAILABLE = False
+
+    # This check is necessary to use the mock example
+    
     # This check is necessary to use the mock example
     if not HMM_AVAILABLE or not XGB_AVAILABLE or not SKLEARN_AVAILABLE:
         print("\n" + "="*80)
