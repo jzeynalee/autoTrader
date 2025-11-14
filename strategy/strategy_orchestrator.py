@@ -161,9 +161,11 @@ def run_strategy_discovery(db_connector):
                 rows_upserted = 0
                 for inst_key, data in strategy_playbook.items():
                     try:
+
                         db_record = {
                             'regime_instance_id': data.get('regime_instance_id', inst_key),
                             'regime_type': data.get('regime_type'),
+                            'regime_id': data.get('regime_type'),   # ADD THIS
                             'regime_name': data.get('regime_name'),
                             'trend_direction': data.get('trend_direction'),
                             'volatility_level': data.get('volatility_level'),
@@ -171,6 +173,7 @@ def run_strategy_discovery(db_connector):
                             'strategy_patterns_json': json.dumps(data.get('strategy_patterns', [])),
                             'last_updated': datetime.now()
                         }
+
                         # DB connector must implement upsert_strategy_playbook_instance or reuse previous function
                         if hasattr(db_connector, 'upsert_strategy_playbook_instance'):
                             db_connector.upsert_strategy_playbook_instance(db_record)
@@ -193,7 +196,8 @@ def run_strategy_discovery(db_connector):
     except Exception as e:
         print(f"  ❌ An error occurred during playbook discovery: {e}")
 
-    
+    return 
+
     # ============================================================================
     # PHASE 2: STRATEGY DISCOVERY (SINGLE PASS)
     # ============================================================================

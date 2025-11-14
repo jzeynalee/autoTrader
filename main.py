@@ -12,6 +12,8 @@ from .db_connector import DatabaseConnector
 from .ingestion import DataIngestionSystem
 from .features_engineering import FeatureEngineer
 from .strategy.strategy_orchestrator import run_strategy_discovery # New entry function
+from strategy.analysis_advanced_regime import AdvancedRegimeDetectionSystem
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="AutoTrader Algorithmic Strategy Platform")

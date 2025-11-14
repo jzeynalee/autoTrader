@@ -1270,6 +1270,8 @@ class AdvancedRegimeDetectionSystem:
         i = 0
         while i < len(swing_df):
             regime_label = swing_df.at[i, 'hmm_regime']
+            if pd.isna(regime_label) or regime_label is None:
+                regime_label = -1   # fallback dummy regime type
             # gather contiguous block
             j = i
             while j < len(swing_df) and swing_df.at[j, 'hmm_regime'] == regime_label:
