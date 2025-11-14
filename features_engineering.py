@@ -866,10 +866,64 @@ class FeatureEngineerOptimized:
         depth[pb_pct.between(-10, -5)] = 'moderate'
         depth[pb_pct < -10] = 'deep'
         cols['pullback_depth'] = depth
+
+
         
+        # ============================================================================
+        # VECTORIZED VERSION (Faster, but more complex)
+        # ============================================================================
+
+        def detect_higher_lows_vectorized(df):
+            """
+            Vectorized version using rolling window logic.
+            More efficient for large datasets.
+            """
+            pattern = pd.Series(0, index=df.index)
+            
+            # Get swing low prices and their indices
+            swing_low_mask = df['swing_low'] == 1
+            swing_low_prices = df['low'].where(swing_low_mask)
+            
+            # For each bar, check if last 3 swing lows are ascending
+            for i in range(20, len(df)):
+                window = df.iloc[max(0, i-50):i+1]  # Look back 50 bars max
+                recent_lows = window[window['swing_low'] == 1]['low'].tail(3)
+                
+                if len(recent_lows) == 3:
+                    values = recent_lows.values
+                    # Check if ascending
+                    if values[1] > values[0] and values[2] > values[1]:
+                        if df.iloc[i]['trend_medium'] == 1:
+                            pattern.iloc[i] = 1
+            
+            return pattern
+
+        def detect_lower_highs_vectorized(df):
+            """
+            Vectorized version for lower highs pattern.
+            """
+            pattern = pd.Series(0, index=df.index)
+            
+            # Get swing high prices and their indices
+            swing_high_mask = df['swing_high'] == 1
+            
+            # For each bar, check if last 3 swing highs are descending
+            for i in range(20, len(df)):
+                window = df.iloc[max(0, i-50):i+1]  # Look back 50 bars max
+                recent_highs = window[window['swing_high'] == 1]['high'].tail(3)
+                
+                if len(recent_highs) == 3:
+                    values = recent_highs.values
+                    # Check if descending
+                    if values[1] < values[0] and values[2] < values[1]:
+                        if df.iloc[i]['trend_medium'] == -1:
+                            pattern.iloc[i] = 1
+            
+            return pattern
+
         # Higher lows / lower highs patterns (still slow, recommend pandas-ta)
-        cols['higher_lows_pattern'] = 0
-        cols['lower_highs_pattern'] = 0
+        cols['higher_lows_pattern'] = detect_higher_lows_vectorized(df)
+        cols['lower_highs_pattern'] = detect_lower_highs_vectorized(df)
         
         # Pullback to MA
         cols['pullback_to_ema9'] = ((df['close'] - df['ema_9']).abs() / df['ema_9'] < 0.01).astype(int)
@@ -899,8 +953,8 @@ class FeatureEngineerOptimized:
         cols['bars_since_swing_high'] = row_numbers - swing_high_row
         cols['bars_since_swing_low'] = row_numbers - swing_low_row
         
-        # ABC patterns (simplified)
-        
+        # ABC patterns (simplified)  
+        #       
         def detect_abc_pullback(df, window=20):
             """
             Detect ABC pullback pattern:
@@ -1113,6 +1167,26 @@ class FeatureEngineerOptimized:
         
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
+
+        cols['pullback_stage'] = classify_pullback_stage(df)
+
+        # ============================================================================
+        # FIX: ENSURE TIMESTAMP COLUMN EXISTS (for confluence scoring)
+        # ============================================================================
+        
+        if 'timestamp' not in df.columns:
+            if isinstance(df.index, pd.DatetimeIndex):
+                cols['timestamp'] = df.index
+            else:
+                # If index is not datetime, try to convert or use range
+                try:
+                    cols['timestamp'] = pd.to_datetime(df.index)
+                except:
+                    cols['timestamp'] = pd.RangeIndex(len(df))
+            
+        df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
+        cols = {}
+
         
         print("  ✓ All indicators calculated successfully")
         
