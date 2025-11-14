@@ -165,7 +165,7 @@ def run_strategy_discovery(db_connector):
                         db_record = {
                             'regime_instance_id': data.get('regime_instance_id', inst_key),
                             'regime_type': data.get('regime_type'),
-                            'regime_id': data.get('regime_type'),   # ADD THIS
+                            'regime_id': data.get('regime_type'),
                             'regime_name': data.get('regime_name'),
                             'trend_direction': data.get('trend_direction'),
                             'volatility_level': data.get('volatility_level'),

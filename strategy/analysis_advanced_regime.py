@@ -189,7 +189,6 @@ class ZigZagSwingExtractor:
         
         return atr
 
-    
     def extract_swings(self, df: pd.DataFrame) -> List[Dict]:
         """
         Extract ZigZag swing points from OHLC data.
@@ -265,17 +264,17 @@ class HybridSwingRegistry:
         self.swings: List[SwingPoint] = []
         self.feature_cache = {}
     
-    def build_from_dataframe(self, df: pd.DataFrame, zigzag_swings: List[Dict]) -> None:
+    def build_from_dataframe(self, df: pd.DataFrame, swing_points : List[Dict]) -> None:
         """
         Build registry by enriching ZigZag swings with price action features.
         
         Args:
             df: Full OHLCV dataframe with indicators
-            zigzag_swings: Output from ZigZagSwingExtractor
+            swing_points : Output from ZigZagSwingExtractor
         """
         self.swings = []
         
-        for swing_dict in zigzag_swings:
+        for swing_dict in swing_points :
             idx = swing_dict['index']
             
             # Create base swing point
@@ -992,7 +991,38 @@ class AdvancedRegimeDetectionSystem:
         self.random_state = random_state
         
         # Legacy compatibility cache
-        self.regime_cache = {}
+        self.regime_cache = {}    
+    
+    def _extract_feature_engineered_swings(self, df):
+        """
+        Extract swing points directly from feature-engineered columns:
+            swing_high = 1
+            swing_low  = 1
+        These give maximum swing density (lookback=2).
+        """
+        swings = []
+
+        if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
+            print("⚠️ swing_high/swing_low not found in df. Run feature engineering first.")
+            return swings
+
+        for i in range(len(df)):
+            if df['swing_high'].iloc[i] == 1:
+                swings.append({
+                    'timestamp': df.index[i],
+                    'price': df['high'].iloc[i],
+                    'swing_type': 'high',
+                    'index': i
+                })
+            if df['swing_low'].iloc[i] == 1:
+                swings.append({
+                    'timestamp': df.index[i],
+                    'price': df['low'].iloc[i],
+                    'swing_type': 'low',
+                    'index': i
+                })
+
+        return swings
     
     def detect_advanced_market_regimes(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1023,20 +1053,20 @@ class AdvancedRegimeDetectionSystem:
         
         # === PHASE 1: Extract ZigZag Swings ===
         print("  🔍 Extracting ZigZag swings...")
-        zigzag_swings = self.zigzag.extract_swings(df_analysis)
+        swing_points  = self._extract_feature_engineered_swings(df_analysis)
         
-        if len(zigzag_swings) < 10:
+        if len(swing_points ) < 10:
             print("  ⚠️ Insufficient swings for regime detection")
             df_analysis['historical_regime'] = 'unknown'
             df_analysis['regime_volatility'] = 'normal'
             df_analysis['regime_trend'] = 'ranging'
             return df_analysis
         
-        print(f"     Found {len(zigzag_swings)} swing points")
+        print(f"     Found {len(swing_points )} swing points")
         
         # === PHASE 2: Build Hybrid Swing Registry ===
         print("  📊 Building Hybrid Swing Registry...")
-        self.registry.build_from_dataframe(df_analysis, zigzag_swings)
+        self.registry.build_from_dataframe(df_analysis, swing_points )
         swing_df = self.registry.to_dataframe()
         
         print(f"     Registry built with {len(self.registry.swings)} enriched swings")

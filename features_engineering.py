@@ -259,8 +259,7 @@ class FeatureEngineerOptimized:
         }
         return lookback_map.get(timeframe, 2)  # Default to 2
     
-    # ==================== OPTIMIZED INDICATOR CALCULATION ====================
-    
+    # ==================== OPTIMIZED INDICATOR CALCULATION ====================    
     def calculate_indicators(self, df):
         """
         Optimized indicator calculation using vectorization and batching.
@@ -886,7 +885,7 @@ class FeatureEngineerOptimized:
         cols['pullback_depth'] = depth
         
         # ============================================================================
-        # BONUS: VECTORIZED VERSION (Faster, but more complex)
+        # VECTORIZED HL and LH Detection (Faster, but more complex)
         # ============================================================================
 
         def detect_higher_lows_vectorized(df):
