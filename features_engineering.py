@@ -855,7 +855,9 @@ class FeatureEngineerOptimized:
         cols['trend_short'] = np.where(df['close'] > df['ema_9'], 1, -1)
         cols['trend_medium'] = np.where(df['close'] > df['ema_50'], 1, -1)
         cols['trend_long'] = np.where(df['close'] > df['ema_200'], 1, -1)
-        
+
+
+
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
         
@@ -866,11 +868,9 @@ class FeatureEngineerOptimized:
         depth[pb_pct.between(-10, -5)] = 'moderate'
         depth[pb_pct < -10] = 'deep'
         cols['pullback_depth'] = depth
-
-
         
         # ============================================================================
-        # VECTORIZED VERSION (Faster, but more complex)
+        # BONUS: VECTORIZED VERSION (Faster, but more complex)
         # ============================================================================
 
         def detect_higher_lows_vectorized(df):
@@ -1101,8 +1101,8 @@ class FeatureEngineerOptimized:
                     stage.iloc[i] = 'resumption_bear'
             
             return stage
-        cols['pullback_stage'] = classify_pullback_stage(df)        
-
+        cols['pullback_stage'] = classify_pullback_stage(df)
+        
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
 
