@@ -50,7 +50,7 @@ except ImportError:
     print("Warning: scikit-learn not available. Install with: pip install scikit-learn")
 
 warnings.filterwarnings('ignore', category=FutureWarning)
-
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision loss occurred.*')
 
 # ============================================================================
 # SECTION 1: DATA STRUCTURES
@@ -992,38 +992,97 @@ class AdvancedRegimeDetectionSystem:
         
         # Legacy compatibility cache
         self.regime_cache = {}    
+
+    def _compute_local_slope(self, df, i, window=5):
+        """Compute the slope of close prices around index i."""
+        start = max(0, i - window)
+        end = min(len(df), i + window)
+        segment = df['close'].iloc[start:end].values
+
+        if len(segment) < 2:
+            return 0.0
+
+        x = np.arange(len(segment))
+        slope = np.polyfit(x, segment, 1)[0]
+        return float(slope)
     
-    def _extract_feature_engineered_swings(self, df):
+    def _compute_return_gradient(self, df, i, window=5):
+        start = max(0, i - window)
+        end = min(len(df), i + window)
+        segment = df['close'].iloc[start:end].values
+
+        if len(segment) < 2:
+            return 0.0
+
+        return float((segment[-1] - segment[0]) / segment[0] * 100)
+
+
+    def _extract_feature_engineered_swings(self, df, lookback=2):
         """
-        Extract swing points directly from feature-engineered columns:
-            swing_high = 1
-            swing_low  = 1
-        These give maximum swing density (lookback=2).
+        Extract swing points from feature-engineered columns (swing_high, swing_low)
+        and compute the same metadata fields that the ZigZag extractor produced.
+        This ensures full compatibility with HybridSwingRegistry.build_from_dataframe().
         """
+
         swings = []
 
         if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
-            print("⚠️ swing_high/swing_low not found in df. Run feature engineering first.")
+            print("⚠️ swing_high/swing_low not found. Run feature engineering first.")
             return swings
 
+        highs = df['high'].values
+        lows = df['low'].values
+        closes = df['close'].values
+        atr = df['atr'].values if 'atr' in df.columns else np.zeros(len(df))
+        timestamps = df.index
+
         for i in range(len(df)):
+
+            # Swing HIGH
             if df['swing_high'].iloc[i] == 1:
-                swings.append({
-                    'timestamp': df.index[i],
-                    'price': df['high'].iloc[i],
+                swing = {
+                    'timestamp': timestamps[i],
+                    'index': i,
+                    'price': highs[i],
                     'swing_type': 'high',
-                    'index': i
-                })
+
+                    # ===== Required fields for registry =====
+                    'magnitude_pct': 0.0,    # placeholder, filled later
+                    'duration': lookback,    # simple default
+                    'atr_context': atr[i] if i < len(atr) else 0,
+                    'local_slope': self._compute_local_slope(df, i),
+                    'return_gradient': self._compute_return_gradient(df, i),
+                }
+                swings.append(swing)
+
+            # Swing LOW
             if df['swing_low'].iloc[i] == 1:
-                swings.append({
-                    'timestamp': df.index[i],
-                    'price': df['low'].iloc[i],
+                swing = {
+                    'timestamp': timestamps[i],
+                    'index': i,
+                    'price': lows[i],
                     'swing_type': 'low',
-                    'index': i
-                })
+
+                    # ===== Required fields for registry =====
+                    'magnitude_pct': 0.0,
+                    'duration': lookback,
+                    'atr_context': atr[i] if i < len(atr) else 0,
+                    'local_slope': self._compute_local_slope(df, i),
+                    'return_gradient': self._compute_return_gradient(df, i),
+                }
+                swings.append(swing)
+
+        # Ensure swing order is correct
+        swings = sorted(swings, key=lambda x: x["index"])
+
+        # Compute magnitude_pct after ordering
+        for k in range(1, len(swings)):
+            prev_price = swings[k-1]['price']
+            curr_price = swings[k]['price']
+            swings[k]['magnitude_pct'] = (curr_price - prev_price) / prev_price * 100
 
         return swings
-    
+
     def detect_advanced_market_regimes(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Main function to add historical regime data to a DataFrame.
