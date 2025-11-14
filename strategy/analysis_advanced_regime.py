@@ -1082,6 +1082,158 @@ class AdvancedRegimeDetectionSystem:
             swings[k]['magnitude_pct'] = (curr_price - prev_price) / prev_price * 100
 
         return swings
+    
+    def _compute_regime_centroids(self, swing_df):
+        """
+        Compute mean feature vector for each HMM regime.
+        Returns a dict: regime_id → feature vector dict.
+        """
+        centroids = {}
+
+        if 'hmm_regime' not in swing_df.columns:
+            return {}
+
+        # Needed feature columns (fallbacks added)
+        fcols = [
+            'atr_ratio', 'local_slope', 'rsi', 'macd_hist', 'ppo', 'adx',
+            'price_change', 'structure_type'
+        ]
+
+        df = swing_df.copy()
+
+        # Fallback missing cols
+        for c in fcols:
+            if c not in df.columns:
+                if c == 'structure_type':
+                    df[c] = 'unknown'
+                else:
+                    df[c] = 0.0
+
+        # One-hot encode structure types
+        struct_dummies = pd.get_dummies(df['structure_type'], prefix='struct')
+        df = pd.concat([df, struct_dummies], axis=1)
+
+        # Compute regime centroids
+        for r in sorted(df['hmm_regime'].dropna().unique()):
+            sub = df[df['hmm_regime'] == r]
+
+            if len(sub) == 0:
+                continue
+
+            # numeric mean features
+            num_means = {
+                'atr_ratio': float(sub['atr_ratio'].mean()),
+                'local_slope': float(sub['local_slope'].mean()),
+                'rsi': float(sub['rsi'].mean()),
+                'macd_hist': float(sub['macd_hist'].mean()),
+                'ppo': float(sub['ppo'].mean()),
+                'adx': float(sub['adx'].mean()),
+                'price_change': float(sub['price_change'].mean()),
+            }
+
+            # structure frequencies
+            struct_means = {}
+            for col in struct_dummies.columns:
+                struct_means[col] = float(sub[col].mean())
+
+            centroids[int(r)] = {**num_means, **struct_means}
+
+        return centroids
+
+    def _map_regime_centroid_to_label(self, vec, vol_thresholds):
+        """
+        Assign human-readable regime label from centroid vector.
+        vol_thresholds = (low_thr, high_thr) from ATR percentiles.
+        """
+
+        atr = vec['atr_ratio']
+        slope = vec['local_slope']
+        rsi = vec['rsi']
+        ppo = vec['ppo']
+        adx = vec['adx']
+        macd = vec['macd_hist']
+        pc = vec['price_change']
+
+        low_thr, high_thr = vol_thresholds
+
+        # ---------------------------
+        # 1) Volatility bucket
+        # ---------------------------
+        if atr < low_thr:
+            vol_label = "Low-Vol"
+        elif atr > high_thr:
+            vol_label = "High-Vol"
+        else:
+            vol_label = "Medium-Vol"
+
+        # ---------------------------
+        # 2) Trend bucket (slope + ADX)
+        # ---------------------------
+        if adx < 18:
+            trend_label = "Sideways"
+        else:
+            if slope > 0:
+                trend_label = "Bull Trend"
+            elif slope < 0:
+                trend_label = "Bear Trend"
+            else:
+                trend_label = "Sideways"
+
+        # ---------------------------
+        # 3) Momentum refinement
+        # ---------------------------
+        if "Trend" not in trend_label:
+            # sideways subtypes
+            if rsi > 60:
+                trend_label = "Bullish Range"
+            elif rsi < 40:
+                trend_label = "Bearish Range"
+            else:
+                trend_label = "Choppy Range"
+        else:
+            # trending — refine with momentum
+            if "Bull" in trend_label:
+                if ppo < 0 or macd < 0:
+                    trend_label = "Weak Bull Trend"
+            if "Bear" in trend_label:
+                if ppo > 0 or macd > 0:
+                    trend_label = "Weak Bear Trend"
+
+        return f"{vol_label} {trend_label}"
+
+    def map_hmm_regimes_to_descriptions(self, swing_df):
+        """
+        Option 3 Hybrid Mapping:
+        - compute regime centroids
+        - compute ATR thresholds
+        - assign human-readable labels
+        Returns dict: regime_id → text_label
+        """
+
+        # -----------------------
+        # A) compute regime centroids
+        # -----------------------
+        centroids = self._compute_regime_centroids(swing_df)
+        if not centroids:
+            return {}
+
+        # -----------------------
+        # B) compute volatility percentiles
+        # -----------------------
+        atr_values = [v['atr_ratio'] for v in centroids.values()]
+        low_thr = np.percentile(atr_values, 35)
+        high_thr = np.percentile(atr_values, 70)
+
+        vol_thresholds = (low_thr, high_thr)
+
+        # -----------------------
+        # C) produce labels
+        # -----------------------
+        labels = {}
+        for regime_id, vec in centroids.items():
+            labels[regime_id] = self._map_regime_centroid_to_label(vec, vol_thresholds)
+
+        return labels
 
     def detect_advanced_market_regimes(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1154,23 +1306,51 @@ class AdvancedRegimeDetectionSystem:
                 hmm_labels = np.zeros(len(swing_df), dtype=int)
         else:
             print("  ⚠️ Skipping HMM (insufficient data or library unavailable)")
-            hmm_labels = np.zeros(len(swing_df), dtype=int)
+            hmm_labels = np.zeros(len(swing_df), dtype=int)        
 
         # === NEW PHASE: compute regime instances (adaptive clustering) ===
         try:
             swing_df = self.registry.to_dataframe()
-            swing_df = self._compute_regime_instances(swing_df)
+            segmented  = self._segment_regime_instances(
+                        swing_df,
+                        min_instance_swings=6,
+                        max_instance_swings=500,
+                        vol_jump_pct=0.4,
+                        slope_sign_change=True,
+                        require_structure_rotation=True,
+                        low_confidence_threshold=0.45
+                        )
             # apply back to registry.swings so objects carry instance ids
             id_map = dict()
             for idx, row in swing_df.iterrows():
                 key = (int(row['index']),)  # unique by swing.index
-                id_map[int(row['index'])] = row.get('regime_instance_id')
+                #id_map[int(row['index'])] = row.get('regime_instance_id')
+                id_map = { int(row['index']): row['regime_instance_id'] for _, row in segmented.iterrows() }
             for swing in self.registry.swings:
-                swing.regime_instance_id = id_map.get(swing.index, None)
-        except Exception as e:
+                swing.regime_instance_id = id_map.get(swing.index, swing.__dict__.get('regime_instance_id', None))
+                swing.regime_instance_index = id_map.get(swing.index, None) and int(str(id_map.get(swing.index)).split('_I')[-1]) or getattr(swing, 'regime_instance_index', -1)
             print(f"  ⚠️ Regime instance computation failed: {e}")
             # continue without instances
-        
+        except:
+            pass
+
+
+        # build swing dataframe
+        swing_df = self.registry.to_dataframe()
+
+        # get regime type names
+        self.regime_type_map = self.map_hmm_regimes_to_descriptions(swing_df)
+
+        # apply them to swing dataframe
+        swing_df['regime_type'] = swing_df['hmm_regime'].apply(
+            lambda r: self.regime_type_map.get(int(r), "Unknown")
+        )
+
+        # also attach to registry swing objects
+        for sw in self.registry.swings:
+            sw.regime_type = self.regime_type_map.get(int(sw.hmm_regime), "Unknown")
+
+
         # === PHASE 4: XGBoost Prediction ===
         if XGB_AVAILABLE and len(swing_df) >= 50:
             print("  🎯 Training XGBoost regime predictor...")
@@ -1331,6 +1511,164 @@ class AdvancedRegimeDetectionSystem:
         swing_df = self.registry.to_dataframe()
         swing_df.to_csv(filename, index=False)
         print(f"✅ Swing registry exported to {filename}")
+
+    def _segment_regime_instances(
+        self,
+        swing_df: pd.DataFrame,
+        min_instance_swings: int = 6,
+        max_instance_swings: int = 300,
+        vol_jump_pct: float = 0.4,
+        slope_sign_change: bool = True,
+        require_structure_rotation: bool = True,
+        low_confidence_threshold: float = 0.5
+    ) -> pd.DataFrame:
+        """
+        Robust segmentation of regime *instances* within each HMM regime type.
+
+        Logic (for each contiguous block of the same `hmm_regime`):
+        - Start instance at block start.
+        - Split to a new instance when one or more of these occurs:
+            * sustained volatility jump (abs(delta_atr)/prev_atr >= vol_jump_pct)
+            * slope sign change (if slope_sign_change True)
+            * price-structure rotation (structure_type changes direction if require_structure_rotation True)
+            * regime probability drops below low_confidence_threshold (optional)
+        - Enforce a minimum instance length (min_instance_swings) so brief fluctuations don't fragment.
+        - Enforce a maximum instance length to force periodic splits (max_instance_swings).
+
+        Adds / returns columns:
+        - 'regime_instance_id'  (str): like "R{regime}_I{n}"
+        - 'regime_instance_index' (int): 0-based index within regime type
+        """
+
+        df = swing_df.reset_index(drop=True).copy()
+
+        # ensure required columns exist; create safe defaults if missing
+        if 'hmm_regime' not in df.columns:
+            df['hmm_regime'] = -1
+        if 'atr_ratio' not in df.columns and 'atr' in df.columns and 'price' in df.columns:
+            # try derive relative atr
+            df['atr_ratio'] = df['atr'] / df['price'].replace(0, np.nan)
+            df['atr_ratio'] = df['atr_ratio'].fillna(0.0)
+        elif 'atr_ratio' not in df.columns:
+            df['atr_ratio'] = 0.0
+
+        if 'local_slope' not in df.columns:
+            df['local_slope'] = 0.0
+        if 'hmm_probability' not in df.columns:
+            df['hmm_probability'] = 1.0
+        if 'structure_type' not in df.columns:
+            df['structure_type'] = 'unknown'
+
+        # prepare result columns
+        df['regime_instance_id'] = None
+        df['regime_instance_index'] = -1
+
+        def _new_instance_label(regime_label, counter):
+            return f"R{int(regime_label)}_I{counter}"
+
+        # iterate contiguous blocks of same regime label
+        n = len(df)
+        i = 0
+        while i < n:
+            regime_label = df.at[i, 'hmm_regime']
+            # find block end
+            j = i
+            while j < n and df.at[j, 'hmm_regime'] == regime_label:
+                j += 1
+            block = df.iloc[i:j].copy().reset_index(drop=True)
+            L = len(block)
+            if L == 0:
+                i = j
+                continue
+
+            # compute deltas for block (safe ops)
+            atr = block['atr_ratio'].astype(float).fillna(0.0).values
+            slope = block['local_slope'].astype(float).fillna(0.0).values
+            prob = block['hmm_probability'].astype(float).fillna(1.0).values
+            struct = block['structure_type'].astype(str).fillna('unknown').values
+
+            # precompute volatility jump flags (relative diff vs previous)
+            vol_change = np.zeros(L, dtype=bool)
+            for k in range(1, L):
+                prev_atr = atr[k-1] if atr[k-1] != 0 else 1e-9
+                if prev_atr != 0:
+                    if abs((atr[k] - atr[k-1]) / prev_atr) >= vol_jump_pct:
+                        vol_change[k] = True
+
+            # slope sign change flags
+            slope_change = np.zeros(L, dtype=bool)
+            if slope_sign_change:
+                for k in range(1, L):
+                    if slope[k] * slope[k-1] < 0:  # sign change
+                        slope_change[k] = True
+
+            # structure rotation flags (detect change between rising->falling categories)
+            struct_change = np.zeros(L, dtype=bool)
+            if require_structure_rotation:
+                for k in range(1, L):
+                    if struct[k] != struct[k-1]:
+                        # only consider meaningful rotations (exclude unknown)
+                        if struct[k] != 'unknown' and struct[k-1] != 'unknown':
+                            struct_change[k] = True
+
+            # low confidence flags
+            low_conf = (prob < low_confidence_threshold)
+
+            # now walk the block and assign instance ids using persistence rules
+            instance_counter = 0
+            seg_start = 0
+            k = 0
+            while k < L:
+                # check for split triggers starting at k (we only act when a trigger is sustained or meaningful)
+                triggered = False
+                # combine triggers at this position
+                if vol_change[k] or slope_change[k] or struct_change[k] or low_conf[k]:
+                    triggered = True
+
+                # if triggered, check persistence and minimum length constraints
+                if triggered:
+                    # only allow a split if the segment [seg_start : k) has at least min_instance_swings
+                    if (k - seg_start) >= min_instance_swings:
+                        # assign current segment
+                        instance_label = _new_instance_label(regime_label, instance_counter)
+                        indices = block.index[seg_start:k].tolist()
+                        df.loc[df.index[indices], 'regime_instance_id'] = instance_label
+                        df.loc[df.index[indices], 'regime_instance_index'] = instance_counter
+                        instance_counter += 1
+                        seg_start = k
+                    # else do not split; treat as noise → continue without advancing seg_start
+
+                # enforce a hard max instance length: if current segment grows too large, force a split
+                if (k - seg_start + 1) >= max_instance_swings:
+                    instance_label = _new_instance_label(regime_label, instance_counter)
+                    indices = block.index[seg_start:k+1].tolist()
+                    df.loc[df.index[indices], 'regime_instance_id'] = instance_label
+                    df.loc[df.index[indices], 'regime_instance_index'] = instance_counter
+                    instance_counter += 1
+                    seg_start = k + 1
+
+                k += 1
+
+            # finalize last segment in the block
+            if seg_start < L:
+                instance_label = _new_instance_label(regime_label, instance_counter)
+                indices = block.index[seg_start:L].tolist()
+                df.loc[df.index[indices], 'regime_instance_id'] = instance_label
+                df.loc[df.index[indices], 'regime_instance_index'] = instance_counter
+                instance_counter += 1
+
+            # move to next block
+            i = j
+
+        # fallback: any None instance ids -> assign based on regime only
+        for idx in df[df['regime_instance_id'].isnull()].index:
+            rid = df.at[idx, 'hmm_regime']
+            df.at[idx, 'regime_instance_id'] = f"R{int(rid)}_I0"
+            df.at[idx, 'regime_instance_index'] = 0
+
+        # return with original index semantics (caller usually resets anyway)
+        return df
+
 
     def _compute_regime_instances(self, swing_df: pd.DataFrame, min_instance_length: int = 3, z_threshold: float = 1.0) -> pd.DataFrame:
         """
