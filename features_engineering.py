@@ -1047,7 +1047,69 @@ class FeatureEngineerOptimized:
                     stage.iloc[i] = 'resumption_bear'
             
             return stage
-        cols['pullback_stage'] = classify_pullback_stage(df)
+        cols['pullback_stage'] = classify_pullback_stage(df)        
+
+        df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
+        cols = {}
+
+        # ============ REGIME ANALYSIS PRE-CALCULATIONS ============
+        # These are features that analysis_advanced_regime.py
+        # will read at each swing point.
+
+        print("  Calculating regime pre-calc features...")
+        
+        # Trend features
+        cols['local_slope'] = (df['close'] - df['close'].shift(10)) / 10 / df['close']
+        cols['return_gradient'] = df['close'].pct_change().diff().rolling(5).mean()
+        cols['directional_persistence'] = (df['close'].pct_change() > 0).rolling(10).mean() - 0.5
+        
+        # Volatility features
+        cols['atr_ratio'] = df['atr'] / df['close']
+        cols['normalized_variance'] = df['close'].pct_change().rolling(20).std()
+        
+        # Volume features
+        cols['volume_roc'] = (df['volume'] - df['volume'].shift(5)) / df['volume'].shift(5)
+        cols['obv_change'] = df['obv'].diff(1)
+        
+        vol_mean_20 = df['volume'].rolling(20).mean()
+        vol_std_20 = df['volume'].rolling(20).std()
+        cols['volume_zscore'] = (df['volume'] - vol_mean_20) / vol_std_20
+        
+        # Price action anomaly features
+        cols['gap_intensity'] = (df['open'] - df['close'].shift(1)).abs() / df['close'].shift(1)
+        cols['extended_bar_ratio'] = (df['high'] - df['low']) / df['atr']
+        cols['volume_spike'] = (df['volume'] > (vol_mean_20 * 2.0)).astype(int)
+
+        # Candle context features
+        bullish_patterns = [
+            'pattern_hammer', 'pattern_bullish_engulfing', 'pattern_morning_star',
+            'pattern_piercing_line', 'pattern_inverted_hammer'
+        ]
+        bearish_patterns = [
+            'pattern_shooting_star', 'pattern_bearish_engulfing', 'pattern_evening_star',
+            'pattern_dark_cloud_cover', 'pattern_hanging_man'
+        ]
+        doji_patterns = [
+            'pattern_doji', 'pattern_dragonfly_doji', 'pattern_gravestone_doji',
+            'pattern_long_legged_doji'
+        ]
+
+        # Calculate rolling sums for recent patterns
+        # We check if column exists before summing
+        cols['recent_bullish_patterns'] = 0
+        for pattern in bullish_patterns:
+            if pattern in df.columns:
+                cols['recent_bullish_patterns'] += df[pattern].rolling(5).sum()
+        
+        cols['recent_bearish_patterns'] = 0
+        for pattern in bearish_patterns:
+            if pattern in df.columns:
+                cols['recent_bearish_patterns'] += df[pattern].rolling(5).sum()
+                
+        cols['recent_doji'] = 0
+        for pattern in doji_patterns:
+            if pattern in df.columns:
+                cols['recent_doji'] += df[pattern].rolling(5).sum()
         
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}

@@ -230,7 +230,7 @@ class ZigZagSwingExtractor:
         
         return swings
     
-    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+    '''def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate Average True Range."""
         high = df['high']
         low = df['low']
@@ -243,7 +243,7 @@ class ZigZagSwingExtractor:
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         atr = tr.rolling(window=period, min_periods=1).mean()
         
-        return atr
+        return atr'''
 
 
 # ============================================================================
@@ -291,7 +291,7 @@ class HybridSwingRegistry:
             
             self.swings.append(swing)
     
-    def _enrich_swing_with_features(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> None:
+    '''def _enrich_swing_with_features(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> None:
         """
         Augment swing with all price action, volume, structure, and momentum features.
         """
@@ -334,7 +334,55 @@ class HybridSwingRegistry:
         # === PRICE ACTION ANOMALIES ===
         swing.gap_intensity = self._calculate_gap_intensity(df, idx)
         swing.extended_bar_ratio = self._calculate_extended_bar_ratio(df, idx)
-        swing.volume_spike = self._detect_volume_spike(df, idx)
+        swing.volume_spike = self._detect_volume_spike(df, idx)'''
+    
+    def _enrich_swing_with_features(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> None:
+        """
+        Augment swing with all price action, volume, structure, and momentum features.
+        This now READS pre-calculated bar-by-bar features from the dataframe
+        and calculates ONLY swing-specific features.
+        """
+        if idx >= len(df):
+            return
+        
+        # === TREND FEATURES (Read from df) ===
+        swing.local_slope = self._get_safe_value(df, idx, 'local_slope', default=0.0)
+        swing.return_gradient = self._get_safe_value(df, idx, 'return_gradient', default=0.0)
+        swing.directional_persistence = self._get_safe_value(df, idx, 'directional_persistence', default=0.0)
+        
+        # === VOLATILITY FEATURES (Read from df) ===
+        swing.atr_ratio = self._get_safe_value(df, idx, 'atr_ratio', default=1.0)
+        swing.bb_width = self._get_safe_value(df, idx, 'bb_width', default=0.0)
+        swing.kc_width = self._get_safe_value(df, idx, 'kc_width', default=0.0)
+        swing.normalized_variance = self._get_safe_value(df, idx, 'normalized_variance', default=0.0)
+        
+        # === MOMENTUM FEATURES (Read from df) ===
+        swing.rsi = self._get_safe_value(df, idx, 'rsi', default=50.0)
+        swing.roc = self._get_safe_value(df, idx, 'roc', default=0.0)
+        swing.ppo = self._get_safe_value(df, idx, 'ppo', default=0.0)
+        swing.macd_hist = self._get_safe_value(df, idx, 'macd_hist', default=0.0)
+        swing.adx = self._get_safe_value(df, idx, 'adx', default=0.0)
+        
+        # === VOLUME FEATURES (Read from df) ===
+        swing.volume_roc = self._get_safe_value(df, idx, 'volume_roc', default=0.0)
+        swing.obv_change = self._get_safe_value(df, idx, 'obv_change', default=0.0)
+        swing.volume_zscore = self._get_safe_value(df, idx, 'volume_zscore', default=0.0)
+        
+        # === STRUCTURE FEATURES (Calculated here) ===
+        swing.structure_type = self._classify_swing_structure(swing, df, idx)
+        swing.structure_break = self._detect_structure_break(df, idx)
+        swing.pullback_depth = self._get_safe_value(df, idx, 'pullback_from_high_pct', default=0.0)
+        
+        # === CANDLE CONTEXT (Read from df) ===
+        swing.recent_bullish_patterns = self._get_safe_value(df, idx, 'recent_bullish_patterns', default=0)
+        swing.recent_bearish_patterns = self._get_safe_value(df, idx, 'recent_bearish_patterns', default=0)
+        swing.recent_doji = self._get_safe_value(df, idx, 'recent_doji', default=0)
+        
+        # === PRICE ACTION ANOMALIES (Read from df) ===
+        swing.gap_intensity = self._get_safe_value(df, idx, 'gap_intensity', default=0.0)
+        swing.extended_bar_ratio = self._get_safe_value(df, idx, 'extended_bar_ratio', default=1.0)
+        swing.volume_spike = bool(self._get_safe_value(df, idx, 'volume_spike', default=0))
+        
     
     # ========== Helper Methods ==========
     
@@ -345,7 +393,7 @@ class HybridSwingRegistry:
         val = df[column].iloc[idx]
         return float(val) if pd.notna(val) else default
     
-    def _calculate_local_slope(self, df: pd.DataFrame, idx: int, window: int) -> float:
+    '''def _calculate_local_slope(self, df: pd.DataFrame, idx: int, window: int) -> float:
         """Calculate local price slope using linear regression."""
         if idx < window:
             return 0.0
@@ -421,7 +469,7 @@ class HybridSwingRegistry:
         if std_vol == 0:
             return 0.0
         
-        return (df['volume'].iloc[idx] - mean_vol) / std_vol
+        return (df['volume'].iloc[idx] - mean_vol) / std_vol'''
     
     def _classify_swing_structure(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> str:
         """Classify swing as HH, HL, LH, or LL."""
@@ -452,7 +500,7 @@ class HybridSwingRegistry:
         
         return bullish_break or bearish_break
     
-    def _count_recent_patterns(self, df: pd.DataFrame, idx: int, pattern_type: str) -> int:
+    '''def _count_recent_patterns(self, df: pd.DataFrame, idx: int, pattern_type: str) -> int:
         """Count recent candlestick patterns of given type."""
         if idx < 5:
             return 0
@@ -476,9 +524,9 @@ class HybridSwingRegistry:
             if pattern in df.columns:
                 count += (recent_window[pattern] == 1).sum()
         
-        return count
+        return count'''
     
-    def _calculate_gap_intensity(self, df: pd.DataFrame, idx: int) -> float:
+    '''def _calculate_gap_intensity(self, df: pd.DataFrame, idx: int) -> float:
         """Calculate gap size as % of price."""
         if idx < 1:
             return 0.0
@@ -491,9 +539,9 @@ class HybridSwingRegistry:
         current_range = df['high'].iloc[idx] - df['low'].iloc[idx]
         atr = self._get_safe_value(df, idx, 'atr', default=current_range)
         
-        return current_range / atr if atr != 0 else 1.0
+        return current_range / atr if atr != 0 else 1.0'''
     
-    def _detect_volume_spike(self, df: pd.DataFrame, idx: int) -> bool:
+    '''def _detect_volume_spike(self, df: pd.DataFrame, idx: int) -> bool:
         """Detect if volume is significantly above average."""
         if idx < 20 or 'volume' not in df.columns:
             return False
@@ -501,7 +549,7 @@ class HybridSwingRegistry:
         recent_vol = df['volume'].iloc[idx-20:idx].mean()
         current_vol = df['volume'].iloc[idx]
         
-        return current_vol > (recent_vol * 2.0)  # 2x average = spike
+        return current_vol > (recent_vol * 2.0)  # 2x average = spike'''
     
     def to_dataframe(self) -> pd.DataFrame:
         """Convert registry to pandas DataFrame for ML."""
