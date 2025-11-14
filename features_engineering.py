@@ -247,6 +247,18 @@ class FeatureEngineerOptimized:
         df = df.loc[:, ~df.columns.duplicated(keep='last')]
         return df
     
+    # In features_engineering.py, add this helper:
+    def get_optimal_lookback(timeframe):
+        """Get optimal swing lookback based on timeframe."""
+        lookback_map = {
+            '1m': 1,   # Very sensitive for scalping
+            '5m': 2,   # Standard for intraday
+            '15m': 2,  # Standard for swing detection
+            '1h': 3,   # Slightly less sensitive
+            '4h': 3,   # Filter minor noise
+        }
+        return lookback_map.get(timeframe, 2)  # Default to 2
+    
     # ==================== OPTIMIZED INDICATOR CALCULATION ====================
     
     def calculate_indicators(self, df):
@@ -797,7 +809,11 @@ class FeatureEngineerOptimized:
         # *** CRITICAL FIX: DATA LEAKAGE ***
         # Swing points loop is still slow, but now it is *correct*.
         # The signal is shifted 5 bars to prevent future-peeking.
-        lookback = 5
+
+        #lookback = get_optimal_lookback(self.timeframe) # This line needs to extract timeframe from pair_tf string
+
+        lookback = 2
+
         swing_highs = pd.Series(False, index=df.index)
         swing_lows = pd.Series(False, index=df.index)
         

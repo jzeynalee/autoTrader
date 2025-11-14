@@ -725,26 +725,32 @@ class GaussianHMMRegimeClassifier:
             
             if is_bullish and not is_high_vol:
                 name = "Low-Vol Bull Trend"
+                name = f"{name} (R{regime_id})" 
                 trend = "bull"
                 volatility = "low"
             elif is_bullish and is_high_vol:
                 name = "High-Vol Bull Trend"
+                name = f"{name} (R{regime_id})" 
                 trend = "bull"
                 volatility = "high"
             elif is_bearish and not is_high_vol:
                 name = "Low-Vol Bear Trend"
+                name = f"{name} (R{regime_id})" 
                 trend = "bear"
                 volatility = "low"
             elif is_bearish and is_high_vol:
                 name = "High-Vol Bear Trend"
+                name = f"{name} (R{regime_id})" 
                 trend = "bear"
                 volatility = "high"
             elif is_high_vol:
                 name = "High-Vol Chop"
+                name = f"{name} (R{regime_id})" 
                 trend = "neutral"
                 volatility = "high"
             else:
                 name = "Low-Vol Range"
+                name = f"{name} (R{regime_id})" 
                 trend = "neutral"
                 volatility = "low"
             

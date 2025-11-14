@@ -72,12 +72,24 @@ class DatabaseConnector:
                 last_backtest_date TEXT
             );
         """)
-        
+        # --- 3. strategy_playbook (Stores regime-based playbook) ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_playbook (
+                regime_name TEXT PRIMARY KEY,
+                regime_id INTEGER,
+                trend_direction TEXT,
+                volatility_level TEXT,
+                confirming_indicators_json TEXT,
+                strategy_patterns_json TEXT,
+                last_updated TEXT
+            );
+        """)
         self.conn.commit()
 
     def _get_current_columns(self, table_name: str) -> List[str]:
         """Retrieves current column names from a table."""
-        if not self.conn: return []
+        if not self.conn: 
+            return
         cursor = self.conn.execute(f"PRAGMA table_info({table_name});")
         return [col[1] for col in cursor.fetchall()]
 
@@ -109,6 +121,52 @@ class DatabaseConnector:
                         print(f"   ❌ Failed to add column {col}: {e}")
             
             self.conn.commit()
+
+    # ========================================================================
+    # STRATEGY & PLAYBOOK I/O
+    # ========================================================================
+
+    def upsert_strategy_playbook(self, playbook_record: dict):
+        """
+        Inserts or replaces a single record in the strategy_playbook table.
+        
+        Args:
+            playbook_record: A dictionary matching the table schema.
+        """
+        if not self.conn:
+            print("❌ Cannot upsert playbook: No database connection.")
+            return
+
+        cursor = self.conn.cursor()
+        query = """
+            INSERT OR REPLACE INTO strategy_playbook (
+                regime_name,
+                regime_id,
+                trend_direction,
+                volatility_level,
+                confirming_indicators_json,
+                strategy_patterns_json,
+                last_updated
+            ) VALUES (
+                :regime_name,
+                :regime_id,
+                :trend_direction,
+                :volatility_level,
+                :confirming_indicators_json,
+                :strategy_patterns_json,
+                :last_updated
+            );
+        """
+        
+        try:
+            # Convert datetime to string if it's an object
+            if isinstance(playbook_record.get('last_updated'), datetime):
+                playbook_record['last_updated'] = playbook_record['last_updated'].isoformat()
+                
+            cursor.execute(query, playbook_record)
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"❌ Error upserting strategy playbook record '{playbook_record.get('regime_name')}': {e}")
 
     # ========================================================================
     # INGESTION & CORE SYSTEM I/O (New/Updated Methods)
@@ -202,14 +260,6 @@ class DatabaseConnector:
         except Exception as e:
             print(f"❌ Error loading raw OHLCV for {pair_tf}: {e}")
             return None
-        
-    def get_all_calculated_pair_tfs(self) -> List[str]:
-        """Retrieves all pair_tfs that have calculated features (non-null RSI placeholder)."""
-        if not self.conn: return []
-        cursor = self.conn.cursor()
-        # We use 'close' to ensure raw data exists, and 'rsi' to check if FE has run successfully.
-        cursor.execute("SELECT DISTINCT pair_tf FROM features_data WHERE close IS NOT NULL AND rsi IS NOT NULL;")
-        return [row[0] for row in cursor.fetchall()]
 
     def get_all_calculated_pair_tfs(self) -> List[str]:
         """Retrieves all pair_tfs that have calculated features (non-null RSI placeholder)."""
@@ -244,27 +294,6 @@ class DatabaseConnector:
             
             # Convert timestamp and set index
             # NOTE: Timestamp is an INTEGER (seconds) in the DB.
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-            df = df.set_index('timestamp')
-            return df
-        except Exception as e:
-            print(f"❌ Error loading full features for {pair_tf}: {e}")
-            return None
-
-    def load_full_features(self, pair_tf: str) -> Optional[pd.DataFrame]:
-        """Loads a DataFrame with all available features for the pair_tf."""
-        if not self.conn: return None
-        
-        # We select ALL columns dynamically from the features_data table
-        columns = self._get_current_columns('features_data')
-        columns_str = ", ".join(columns)
-        
-        query = f"SELECT {columns_str} FROM features_data WHERE pair_tf = ? ORDER BY timestamp ASC;"
-        try:
-            df = pd.read_sql_query(query, self.conn, params=(pair_tf,))
-            if df.empty: return None
-            
-            # Convert timestamp and set index
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             df = df.set_index('timestamp')
             return df

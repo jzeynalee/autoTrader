@@ -35,6 +35,7 @@ from .analysis_trend import TrendAnalysisSystem
 from .analysis_pullback import PullbackAnalysisSystem
 from .analysis_advanced_regime import AdvancedRegimeDetectionSystem
 from .analysis_confluence_scoring import ConfluenceScoringSystem
+from .regime_based_discovery_system import RegimeStrategyDiscovery
 from .core import StrategyDiscoverySystem
 from .discovery_modes import DiscoveryModesMixin
 
@@ -54,6 +55,7 @@ def run_strategy_discovery(db_connector):
         return
 
     start_time = time.time()
+    export_files = [] # Moved from Phase 6 to be available for all phases
     
     # ============================================================================
     # PHASE 1: INITIALIZATION & DATA LOADING (FROM DB)
@@ -115,6 +117,82 @@ def run_strategy_discovery(db_connector):
         system.all_dataframes[pair_tf] = system.enhanced_market_regime_detection(df)
     
     print(f"✅ Loaded {len(system.all_dataframes)} datasets")
+
+    # ============================================================================
+    # --- NEW PHASE 1.5: REGIME STRATEGY PLAYBOOK DISCOVERY ---
+    # ============================================================================
+    print("\n" + "="*80)
+    print("PHASE 1.5: REGIME STRATEGY PLAYBOOK DISCOVERY")
+    print("="*80)
+    
+    strategy_playbook = {}
+    try:
+        # We assume system.regime_detector is the trained instance
+        # from the AdvancedRegimeDetectionSystem, containing the HMM models
+        # from the *last* dataframe processed in Phase 1.
+        if system.regime_detector and system.regime_detector.hmm_classifier:
+            
+            regime_states = system.regime_detector.hmm_classifier.regime_states
+            print(f"  ✅ HMM model loaded with {len(regime_states)} total regimes.")
+            
+            print("  🤖 Initializing RegimeStrategyDiscovery...")
+            strategy_discoverer = RegimeStrategyDiscovery(system.regime_detector)
+            
+            print("  🔍 Discovering strategy playbook from regime swings...")
+            strategy_playbook = strategy_discoverer.discover_strategies()
+            
+            print(f"  ✅ Found {len(strategy_playbook)} distinct regime playbooks.")
+
+            strategy_discoverer.print_repository_summary()
+            
+            # --- Temporary JSON Solution ---
+            playbook_filename = 'regime_strategy_playbook.json'
+            try:
+                with open(playbook_filename, 'w') as f:
+                    json.dump(strategy_playbook, f, indent=2)
+                print(f"  ✅ Saved temporary playbook to {playbook_filename}")
+                export_files.append(playbook_filename) # Add to final report
+            except Exception as e:
+                print(f"  ⚠️  Failed to save temporary playbook JSON: {e}")
+
+            # --- Permanent Database Solution ---
+            print("  💾 Persisting playbook to database...")
+            if db_connector:
+                table_name = 'strategy_playbook'
+                rows_upserted = 0
+                for regime_id_key, data in strategy_playbook.items():
+                    try:
+                        # Prepare data for DB (serialize lists/sets)
+                        db_record = {
+                            #'regime_id': regime_id,  # Use regime_id as primary key
+                            'regime_name': data.get('regime_name'),  # Get name from data
+                            'regime_id': data.get('regime_id'),
+                            'trend_direction': data.get('trend_direction'),
+                            'volatility_level': data.get('volatility_level'),
+                            # Store lists as JSON strings
+                            'confirming_indicators_json': json.dumps(data.get('confirming_indicators', [])),
+                            'strategy_patterns_json': json.dumps(data.get('strategy_patterns', [])),
+                            'last_updated': datetime.now()
+                        }
+                        
+                        db_connector.upsert_strategy_playbook(db_record)
+                        rows_upserted += 1
+                        
+                    except Exception as e:
+                        print(f"  ⚠️  Failed to upsert regime '{regime_name}' to DB: {e}")
+                print(f"  ✅ Successfully upserted {rows_upserted} regime playbooks to DB.")
+            else:
+                print("  ⚠️  No db_connector found. Skipping database persistence.")
+
+        else:
+            print("  ⚠️  system.regime_detector not found or HMM not trained. Skipping playbook discovery.")
+            
+    except ValueError as e:
+        print(f"  ⚠️  Failed to initialize RegimeStrategyDiscovery: {e}")
+        print("     This likely means the HMM model in AdvancedRegimeDetectionSystem was not trained.")
+    except Exception as e:
+        print(f"  ❌ An error occurred during playbook discovery: {e}")
+
     
     # ============================================================================
     # PHASE 2: STRATEGY DISCOVERY (SINGLE PASS)
