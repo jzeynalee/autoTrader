@@ -212,7 +212,17 @@ class RegimeStrategyDiscovery:
             if 'hmm_regime' in row and pd.notna(row['hmm_regime']):
                 regime_id = int(row['hmm_regime'])
             regime_state = self.regime_states_map.get(regime_id) if regime_id is not None else None
-
+            
+            # Add human-readable regime label if available from the detector
+            regime_label = None
+            try:
+                detector = getattr(self, 'regime_system', None)
+                if detector is None:
+                    detector = getattr(self, 'regime_detector', None)
+                if detector and hasattr(detector, 'regime_type_map') and regime_id is not None:
+                    regime_label = detector.regime_type_map.get(regime_id)
+            except Exception:
+                regime_label = None
             # choose confirmation logic based on regime_state trend; if missing, use heuristics
             indicators, patterns = [], []
             if regime_state:
@@ -231,8 +241,10 @@ class RegimeStrategyDiscovery:
 
             # store instance meta if not already
             if inst_key not in instance_meta:
+
                 instance_meta[inst_key] = {
                     'regime_type': regime_id,
+                    'regime_label': regime_label if regime_label is not None else (self.regime_states_map.get(regime_id).name if regime_id in self.regime_states_map else f"R{regime_id}"),
                     'regime_name': (self.regime_states_map.get(regime_id).name if regime_id in self.regime_states_map else f"R{regime_id}"),
                     'trend_direction': (self.regime_states_map.get(regime_id).trend_direction if regime_id in self.regime_states_map else 'unknown'),
                     'volatility_level': (self.regime_states_map.get(regime_id).volatility_level if regime_id in self.regime_states_map else 'unknown'),
@@ -245,6 +257,7 @@ class RegimeStrategyDiscovery:
             self.strategy_repository[inst_key] = {
                 'regime_instance_id': inst_key,
                 'regime_type': meta.get('regime_type'),
+                'regime_label': meta.get('regime_label'),
                 'regime_name': meta.get('regime_name'),
                 'trend_direction': meta.get('trend_direction', 'unknown'),
                 'volatility_level': meta.get('volatility_level', 'unknown'),

@@ -395,83 +395,24 @@ class HybridSwingRegistry:
         val = df[column].iloc[idx]
         return float(val) if pd.notna(val) else default
     
-    '''def _calculate_local_slope(self, df: pd.DataFrame, idx: int, window: int) -> float:
-        """Calculate local price slope using linear regression."""
-        if idx < window:
-            return 0.0
-        
-        prices = df['close'].iloc[idx-window:idx+1].values
-        x = np.arange(len(prices))
-        
-        if len(prices) < 2:
-            return 0.0
-        
-        # Simple slope calculation
-        slope = (prices[-1] - prices[0]) / len(prices)
-        return slope / df['close'].iloc[idx]  # Normalize by price
-    
-    def _calculate_return_gradient(self, df: pd.DataFrame, idx: int, window: int) -> float:
-        """Calculate rate of change of returns."""
-        if idx < window + 1:
-            return 0.0
-        
-        returns = df['close'].pct_change().iloc[idx-window:idx+1]
-        if len(returns) < 2:
-            return 0.0
-        
-        return returns.diff().mean()
-    
-    def _calculate_directional_persistence(self, df: pd.DataFrame, idx: int, window: int) -> float:
-        """Measure how consistently price moves in one direction."""
-        if idx < window:
-            return 0.0
-        
-        returns = df['close'].pct_change().iloc[idx-window:idx+1]
-        positive_days = (returns > 0).sum()
-        
-        return (positive_days / window) - 0.5  # -0.5 to 0.5 range, 0 = neutral
-    
-    def _calculate_normalized_variance(self, df: pd.DataFrame, idx: int, window: int) -> float:
-        """Calculate normalized price variance."""
-        if idx < window:
-            return 0.0
-        
-        returns = df['close'].pct_change().iloc[idx-window:idx+1]
-        return returns.std() if len(returns) > 1 else 0.0
-    
-    def _calculate_volume_roc(self, df: pd.DataFrame, idx: int, window: int) -> float:
-        """Volume rate of change."""
-        if idx < window or 'volume' not in df.columns:
-            return 0.0
-        
-        current_vol = df['volume'].iloc[idx]
-        past_vol = df['volume'].iloc[idx-window]
-        
-        if past_vol == 0:
-            return 0.0
-        
-        return (current_vol - past_vol) / past_vol
-    
-    def _calculate_obv_change(self, df: pd.DataFrame, idx: int) -> float:
-        """On-Balance Volume change."""
-        if 'obv' not in df.columns or idx < 1:
-            return 0.0
-        
-        return df['obv'].iloc[idx] - df['obv'].iloc[idx-1]
-    
-    def _calculate_volume_zscore(self, df: pd.DataFrame, idx: int, window: int) -> float:
-        """Calculate volume z-score."""
-        if idx < window or 'volume' not in df.columns:
-            return 0.0
-        
-        vol_window = df['volume'].iloc[idx-window:idx+1]
-        mean_vol = vol_window.mean()
-        std_vol = vol_window.std()
-        
-        if std_vol == 0:
-            return 0.0
-        
-        return (df['volume'].iloc[idx] - mean_vol) / std_vol'''
+    def _sanitize_label(self, label: str) -> str:
+        """
+        Make a safe single-word label from an arbitrary regime description.
+        Example: "Low-Vol Bull Trend" -> "Low-Vol_Bull_Trend"
+        """
+        if label is None:
+            return "Unknown_Regime"
+        s = str(label)
+        # Replace whitespace and slashes with underscore, remove problematic chars
+        s = s.strip()
+        s = s.replace('/', '_').replace('\\', '_')
+        s = "_".join(s.split())               # spaces -> underscore
+        # remove characters that are not alnum, dash, or underscore
+        import re
+        s = re.sub(r'[^A-Za-z0-9_\-]', '', s)
+        if s == "":
+            s = "Regime"
+        return s
     
     def _classify_swing_structure(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> str:
         """Classify swing as HH, HL, LH, or LL."""
@@ -825,6 +766,7 @@ class XGBoostRegimePredictor:
         self.model = None
         self.feature_columns = []
         self.feature_importance = {}
+        self.use_gpu: bool = True
     
     def fit(self, swing_df: pd.DataFrame, hmm_labels: np.ndarray) -> None:
         """
@@ -1139,6 +1081,95 @@ class AdvancedRegimeDetectionSystem:
             centroids[int(r)] = {**num_means, **struct_means}
 
         return centroids
+    
+
+    # ---------------------------
+    # XGBoost GPU-first trainer
+    # ---------------------------
+    def _train_xgboost_gpu_fallback(self, X_train, y_train, X_test, y_test, num_class=None,
+                                     num_boost_round=200, early_stopping_rounds=15,
+                                     use_gpu=True, verbose_eval=True):
+        """
+        Train an XGBoost multiclass model preferring GPU (gpu_hist) and falling back to CPU.
+
+        Returns:
+            model (xgb.Booster), preds_test_prob (np.ndarray), preds_test (np.ndarray), history (dict)
+        """
+        try:
+            import xgboost as xgb
+        except Exception as e:
+            raise RuntimeError("xgboost is not installed or cannot be imported.") from e
+
+        # prepare data matrices
+        dtrain = xgb.DMatrix(X_train, label=y_train)
+        dtest = xgb.DMatrix(X_test, label=y_test)
+        evals = [(dtrain, 'train'), (dtest, 'eval')]
+
+        if num_class is None:
+            # infer num_class from labels
+            num_class = int(np.unique(y_train).max()) + 1
+
+        base_params = {
+            'objective': 'multi:softprob',
+            'num_class': num_class,
+            'eval_metric': 'mlogloss',
+            'verbosity': 1,
+            'seed': 42
+        }
+
+        # GPU attempt
+        tried_gpu = False
+        model = None
+        history = None
+        preds = None
+        preds_label = None
+
+        if use_gpu:
+            tried_gpu = True
+            gpu_params = dict(base_params)
+            gpu_params.update({
+                'tree_method': 'gpu_hist',
+                'predictor': 'gpu_predictor',
+                # 'gpu_id': 0  # optional; uses 0 by default
+            })
+            try:
+                if verbose_eval:
+                    print("  🎯 Training XGBoost regime predictor on GPU (gpu_hist)...")
+                model = xgb.train(gpu_params, dtrain,
+                                  num_boost_round=num_boost_round,
+                                  evals=evals,
+                                  early_stopping_rounds=early_stopping_rounds,
+                                  verbose_eval=verbose_eval)
+                history = model
+                preds = model.predict(dtest)
+                preds_label = preds.argmax(axis=1)
+            except Exception as gpu_err:
+                # fallback to CPU
+                print(f"  ⚠️ GPU training failed ({type(gpu_err).__name__}: {gpu_err}). Falling back to CPU 'hist'.")
+                model = None
+
+        # CPU fallback
+        if model is None:
+            cpu_params = dict(base_params)
+            cpu_params.update({
+                'tree_method': 'hist',
+                'predictor': 'cpu_predictor'
+            })
+            try:
+                if verbose_eval:
+                    print("  🎯 Training XGBoost regime predictor on CPU (hist)...")
+                model = xgb.train(cpu_params, dtrain,
+                                  num_boost_round=num_boost_round,
+                                  evals=evals,
+                                  early_stopping_rounds=early_stopping_rounds,
+                                  verbose_eval=verbose_eval)
+                history = model
+                preds = model.predict(dtest)
+                preds_label = preds.argmax(axis=1)
+            except Exception as cpu_err:
+                raise RuntimeError("Both GPU and CPU XGBoost training attempts failed.") from cpu_err
+
+        return model, preds, preds_label, history
 
     def _map_regime_centroid_to_label(self, vec, vol_thresholds):
         """
@@ -1234,6 +1265,45 @@ class AdvancedRegimeDetectionSystem:
             labels[regime_id] = self._map_regime_centroid_to_label(vec, vol_thresholds)
 
         return labels
+    def _smooth_hmm_states(self, states, window=5):
+        """
+        Smooth HMM output using median filter to remove micro-flips.
+        """
+        if len(states) < window:
+            return states
+        padded = np.pad(states, (window//2, window//2), mode='edge')
+        smoothed = []
+        for i in range(len(states)):
+            window_vals = padded[i:i+window]
+            smoothed.append(int(np.median(window_vals)))
+        return np.array(smoothed, dtype=int)
+
+    def _apply_confidence_smoothing(self, states, prob, threshold=0.45, min_len=4):
+        """
+        Replace low-confidence short segments with the surrounding state.
+        """
+        states = states.copy()
+        n = len(states)
+
+        i = 0
+        while i < n:
+            if prob[i] < threshold:
+                # find low-confidence run
+                j = i + 1
+                while j < n and prob[j] < threshold:
+                    j += 1
+
+                length = j - i
+                if length <= min_len:
+                    # replace with nearest stable state
+                    left = states[i - 1] if i > 0 else states[j]
+                    for k in range(i, j):
+                        states[k] = left
+                i = j
+            else:
+                i += 1
+
+        return states
 
     def detect_advanced_market_regimes(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1248,6 +1318,7 @@ class AdvancedRegimeDetectionSystem:
                 - 'historical_regime' (synthesized regime label)
                 - 'hmm_regime' (unsupervised HMM regime ID)
                 - 'predicted_regime' (supervised XGBoost prediction)
+                - 'regime_instance_id' (instance-level regime identifier)
         """
         if len(df) < 50:
             df['historical_regime'] = 'unknown'
@@ -1262,27 +1333,33 @@ class AdvancedRegimeDetectionSystem:
         
         df_analysis = df.copy()
         
-        # === PHASE 1: Extract ZigZag Swings ===
-        print("  🔍 Extracting ZigZag swings...")
-        swing_points  = self._extract_feature_engineered_swings(df_analysis)
+        # ========================================================================
+        # PHASE 1: Extract Price Action Swings
+        # ========================================================================
+        print("  🔍 Extracting price action swings...")
+        swing_points = self._extract_feature_engineered_swings(df_analysis)
         
-        if len(swing_points ) < 10:
-            print("  ⚠️ Insufficient swings for regime detection")
+        if len(swing_points) < 10:
+            print("  ⚠️  Insufficient swings for regime detection")
             df_analysis['historical_regime'] = 'unknown'
             df_analysis['regime_volatility'] = 'normal'
             df_analysis['regime_trend'] = 'ranging'
             return df_analysis
         
-        print(f"     Found {len(swing_points )} swing points")
+        print(f"     Found {len(swing_points)} swing points")
         
-        # === PHASE 2: Build Hybrid Swing Registry ===
+        # ========================================================================
+        # PHASE 2: Build Hybrid Swing Registry
+        # ========================================================================
         print("  📊 Building Hybrid Swing Registry...")
-        self.registry.build_from_dataframe(df_analysis, swing_points )
+        self.registry.build_from_dataframe(df_analysis, swing_points)
         swing_df = self.registry.to_dataframe()
         
         print(f"     Registry built with {len(self.registry.swings)} enriched swings")
         
-        # === PHASE 3: HMM Classification ===
+        # ========================================================================
+        # PHASE 3: HMM Classification
+        # ========================================================================
         if HMM_AVAILABLE and len(swing_df) >= 20:
             print("  🤖 Running HMM regime classification...")
             self.hmm_classifier = GaussianHMMRegimeClassifier(
@@ -1291,10 +1368,11 @@ class AdvancedRegimeDetectionSystem:
             )
             
             try:
+                # Fit HMM model
                 self.hmm_classifier.fit(swing_df)
                 hmm_labels, hmm_probs = self.hmm_classifier.predict(swing_df)
                 
-                # Update registry with HMM results
+                # Apply HMM results to registry swings
                 for i, swing in enumerate(self.registry.swings):
                     swing.hmm_regime = int(hmm_labels[i])
                     swing.hmm_probability = float(hmm_probs[i])
@@ -1302,56 +1380,85 @@ class AdvancedRegimeDetectionSystem:
                 print(f"     HMM classification complete")
                 
             except Exception as e:
-                print(f"  ⚠️ HMM classification failed: {e}")
+                print(f"  ⚠️  HMM classification failed: {e}")
+                import traceback
+                traceback.print_exc()
                 hmm_labels = np.zeros(len(swing_df), dtype=int)
         else:
-            print("  ⚠️ Skipping HMM (insufficient data or library unavailable)")
-            hmm_labels = np.zeros(len(swing_df), dtype=int)        
-
-        # === NEW PHASE: compute regime instances (adaptive clustering) ===
-        try:
-            swing_df = self.registry.to_dataframe()
-            segmented  = self._segment_regime_instances(
-                        swing_df,
-                        min_instance_swings=6,
-                        max_instance_swings=500,
-                        vol_jump_pct=0.4,
-                        slope_sign_change=True,
-                        require_structure_rotation=True,
-                        low_confidence_threshold=0.45
-                        )
-            # apply back to registry.swings so objects carry instance ids
-            id_map = dict()
-            for idx, row in swing_df.iterrows():
-                key = (int(row['index']),)  # unique by swing.index
-                #id_map[int(row['index'])] = row.get('regime_instance_id')
-                id_map = { int(row['index']): row['regime_instance_id'] for _, row in segmented.iterrows() }
-            for swing in self.registry.swings:
-                swing.regime_instance_id = id_map.get(swing.index, swing.__dict__.get('regime_instance_id', None))
-                swing.regime_instance_index = id_map.get(swing.index, None) and int(str(id_map.get(swing.index)).split('_I')[-1]) or getattr(swing, 'regime_instance_index', -1)
-            print(f"  ⚠️ Regime instance computation failed: {e}")
-            # continue without instances
-        except:
-            pass
-
-
-        # build swing dataframe
-        swing_df = self.registry.to_dataframe()
-
-        # get regime type names
+            print("  ⚠️  Skipping HMM (insufficient data or library unavailable)")
+            hmm_labels = np.zeros(len(swing_df), dtype=int)
+        
+        # ========================================================================
+        # PHASE 3.5: Build Human-Readable Regime Type Map (BEFORE segmentation)
+        # ========================================================================
+        print("  🏷️  Building regime type descriptions...")
+        swing_df = self.registry.to_dataframe()  # Refresh with HMM labels
         self.regime_type_map = self.map_hmm_regimes_to_descriptions(swing_df)
-
-        # apply them to swing dataframe
-        swing_df['regime_type'] = swing_df['hmm_regime'].apply(
-            lambda r: self.regime_type_map.get(int(r), "Unknown")
-        )
-
-        # also attach to registry swing objects
-        for sw in self.registry.swings:
-            sw.regime_type = self.regime_type_map.get(int(sw.hmm_regime), "Unknown")
-
-
-        # === PHASE 4: XGBoost Prediction ===
+        
+        # Apply regime type labels to swing objects
+        for swing in self.registry.swings:
+            regime_id = swing.hmm_regime
+            if regime_id is not None and not pd.isna(regime_id):
+                swing.regime_type = self.regime_type_map.get(int(regime_id), "Unknown")
+            else:
+                swing.regime_type = "Unknown"
+        
+        print(f"     Mapped {len(self.regime_type_map)} regime types")
+        
+        # ========================================================================
+        # PHASE 3.6: Segment Regime Instances (Adaptive Clustering)
+        # ========================================================================
+        print("  🔗 Segmenting regime instances...")
+        try:
+            swing_df = self.registry.to_dataframe()  # Refresh with regime_type
+            
+            segmented = self._segment_regime_instances(
+                swing_df,
+                min_instance_swings=6,
+                max_instance_swings=500,
+                vol_jump_pct=0.4,
+                slope_sign_change=True,
+                require_structure_rotation=True,
+                low_confidence_threshold=0.45
+            )
+            
+            # Build index mapping: bar_index -> (instance_id, instance_index)
+            id_map = {}
+            idx_map = {}
+            
+            for _, row in segmented.iterrows():
+                bar_idx = int(row['index'])  # This is swing.index (bar position)
+                inst_id = row['regime_instance_id']
+                inst_idx = row['regime_instance_index']
+                
+                id_map[bar_idx] = inst_id
+                idx_map[bar_idx] = inst_idx
+            
+            # Apply instance IDs back to registry swings
+            instance_ids_assigned = 0
+            for swing in self.registry.swings:
+                inst_id = id_map.get(swing.index, None)
+                inst_idx = idx_map.get(swing.index, -1)
+                
+                swing.regime_instance_id = inst_id
+                swing.regime_instance_index = inst_idx
+                
+                if inst_id is not None:
+                    instance_ids_assigned += 1
+            
+            unique_instances = len(set(id_map.values()))
+            print(f"     Created {unique_instances} regime instances")
+            print(f"     Assigned instances to {instance_ids_assigned}/{len(self.registry.swings)} swings")
+            
+        except Exception as e:
+            print(f"  ⚠️  Regime instance computation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue without instances - swings will have None instance_id
+        
+        # ========================================================================
+        # PHASE 4: XGBoost Prediction (Optional)
+        # ========================================================================
         if XGB_AVAILABLE and len(swing_df) >= 50:
             print("  🎯 Training XGBoost regime predictor...")
             self.xgb_predictor = XGBoostRegimePredictor(
@@ -1360,7 +1467,10 @@ class AdvancedRegimeDetectionSystem:
             )
             
             try:
-                swing_df = self.registry.to_dataframe()  # Refresh with HMM labels
+                swing_df = self.registry.to_dataframe()  # Refresh with all metadata
+                
+                # Note: fit() doesn't accept tree_method/device params
+                # GPU logic is handled internally by XGBoostRegimePredictor
                 self.xgb_predictor.fit(swing_df, hmm_labels)
                 
                 pred_labels, pred_confidences = self.xgb_predictor.predict(swing_df, hmm_labels)
@@ -1373,15 +1483,22 @@ class AdvancedRegimeDetectionSystem:
                 print(f"     XGBoost prediction complete")
                 
             except Exception as e:
-                print(f"  ⚠️ XGBoost prediction failed: {e}")
+                print(f"  ⚠️  XGBoost prediction failed: {e}")
+                import traceback
+                traceback.print_exc()
         else:
-            print("  ⚠️ Skipping XGBoost (insufficient data or library unavailable)")
+            print("  ⚠️  Skipping XGBoost (insufficient data or library unavailable)")
         
-        # === PHASE 5: Map Regimes to DataFrame ===
+        # ========================================================================
+        # PHASE 5: Map Regimes to Bar-Level DataFrame
+        # ========================================================================
         print("  📈 Mapping regimes + instances to dataframe...")
+        swing_df = self.registry.to_dataframe()  # Final refresh with all fields
         df_analysis = self._map_regimes_to_dataframe(df_analysis, swing_df, hmm_labels)
         
-        # === PHASE 6: Generate Legacy Columns for Compatibility ===
+        # ========================================================================
+        # PHASE 6: Generate Legacy Columns for Compatibility
+        # ========================================================================
         df_analysis = self._generate_legacy_columns(df_analysis)
         
         # Cache result
@@ -1390,6 +1507,7 @@ class AdvancedRegimeDetectionSystem:
         print("  ✅ Regime detection complete")
         
         return df_analysis
+
     
     def _map_regimes_to_dataframe(
         self,
@@ -1564,7 +1682,21 @@ class AdvancedRegimeDetectionSystem:
         df['regime_instance_index'] = -1
 
         def _new_instance_label(regime_label, counter):
-            return f"R{int(regime_label)}_I{counter}"
+            # If the mapping of regime id -> text label exists, prefer that.
+            try:
+                # self.regime_type_map may be defined elsewhere in the detector pipeline
+                mapped = getattr(self, 'regime_type_map', None)
+                if mapped and regime_label in mapped:
+                    base = mapped.get(regime_label)
+                elif mapped and int(regime_label) in mapped:
+                    base = mapped.get(int(regime_label))
+                else:
+                    base = f"R{int(regime_label)}"
+            except Exception:
+                base = f"R{int(regime_label)}"
+
+            safe_base = self._sanitize_label(base)
+            return f"{safe_base}_I{counter}"
 
         # iterate contiguous blocks of same regime label
         n = len(df)
@@ -1663,117 +1795,23 @@ class AdvancedRegimeDetectionSystem:
         # fallback: any None instance ids -> assign based on regime only
         for idx in df[df['regime_instance_id'].isnull()].index:
             rid = df.at[idx, 'hmm_regime']
-            df.at[idx, 'regime_instance_id'] = f"R{int(rid)}_I0"
+            try:
+                mapped = getattr(self, 'regime_type_map', None)
+                if mapped and rid in mapped:
+                    base = mapped.get(rid)
+                elif mapped and pd.notna(rid) and int(rid) in mapped:
+                    base = mapped.get(int(rid))
+                else:
+                    base = f"R{int(rid) if pd.notna(rid) else 'NA'}"
+            except Exception:
+                base = f"R{int(rid) if pd.notna(rid) else 'NA'}"
+
+            safe_base = self._sanitize_label(base)
+            df.at[idx, 'regime_instance_id'] = f"{safe_base}_I0"
             df.at[idx, 'regime_instance_index'] = 0
 
         # return with original index semantics (caller usually resets anyway)
         return df
-
-
-    def _compute_regime_instances(self, swing_df: pd.DataFrame, min_instance_length: int = 3, z_threshold: float = 1.0) -> pd.DataFrame:
-        """
-        Adaptive segmentation within each HMM regime segment.
-        Strategy (Option 3):
-         - For each contiguous block of the same hmm_regime, inspect the sequence of
-           atr_ratio and local_slope (or other metrics).
-         - Compute z-scores for atr_ratio and local_slope inside the block.
-         - If z-scores cross the threshold (abs > z_threshold) persistently for > min_instance_length,
-           mark a cut and start a new instance.
-         - Output: swing_df with a new column 'regime_instance_id' (string) and 'regime_instance_index' (int)
-        """
-        if 'hmm_regime' not in swing_df.columns:
-            swing_df['regime_instance_id'] = None
-            swing_df['regime_instance_index'] = -1
-            return swing_df
-
-        swing_df = swing_df.reset_index(drop=True)
-        swing_df['regime_instance_id'] = None
-        swing_df['regime_instance_index'] = -1
-
-        # helper to create instance id
-        def _new_instance_name(regime_label, counter):
-            return f"R{int(regime_label)}_I{counter}"
-
-        i = 0
-        while i < len(swing_df):
-            regime_label = swing_df.at[i, 'hmm_regime']
-            if pd.isna(regime_label) or regime_label is None:
-                regime_label = -1   # fallback dummy regime type
-            # gather contiguous block
-            j = i
-            while j < len(swing_df) and swing_df.at[j, 'hmm_regime'] == regime_label:
-                j += 1
-            block = swing_df.iloc[i:j].copy()
-            if len(block) == 0:
-                i = j
-                continue
-
-            # compute zscores safely (fallback to simple normalization if nan)
-            atr = block.get('atr_ratio', pd.Series(np.zeros(len(block))))
-            slope = block.get('local_slope', pd.Series(np.zeros(len(block))))
-            try:
-                atr_z = stats.zscore(atr.fillna(0).astype(float))
-                slope_z = stats.zscore(slope.fillna(0).astype(float))
-            except Exception:
-                # fallback: manual zscore
-                def _z(a):
-                    a = np.asarray(a, dtype=float)
-                    m = np.nanmean(a); s = np.nanstd(a)
-                    return (a - m) / (s if s != 0 else 1.0)
-                atr_z = _z(atr)
-                slope_z = _z(slope)
-
-            # combine signals: mark change points where either absolute zscore exceeds threshold
-            change_points = np.zeros(len(block), dtype=bool)
-            for k in range(len(block)):
-                if (abs(atr_z[k]) > z_threshold) or (abs(slope_z[k]) > z_threshold):
-                    change_points[k] = True
-
-            # convert change_points into instance segments: require persistence for min_instance_length
-            # algorithm: walk block; start new instance at block start; if a run of 'change_points' of length >= min_instance_length,
-            # cut before that run.
-            instance_counter = 0
-            seg_start = 0
-            k = 0
-            while k < len(block):
-                # look ahead for persistent change
-                if change_points[k]:
-                    # find length of this run
-                    run_start = k
-                    while k < len(block) and change_points[k]:
-                        k += 1
-                    run_len = k - run_start
-                    if run_len >= min_instance_length and run_start != 0:
-                        # create instance for [seg_start:run_start)
-                        inst_name = _new_instance_name(regime_label, instance_counter)
-                        idxs = block.index[seg_start:run_start].tolist()
-                        swing_df.loc[idxs, 'regime_instance_id'] = inst_name
-                        swing_df.loc[idxs, 'regime_instance_index'] = instance_counter
-                        instance_counter += 1
-                        seg_start = run_start
-                    # continue scanning
-                else:
-                    k += 1
-
-            # final segment
-            if seg_start < len(block):
-                inst_name = _new_instance_name(regime_label, instance_counter)
-                idxs = block.index[seg_start:len(block)].tolist()
-                swing_df.loc[idxs, 'regime_instance_id'] = inst_name
-                swing_df.loc[idxs, 'regime_instance_index'] = instance_counter
-                instance_counter += 1
-
-            # move to next block
-            i = j
-
-        # If any swings still None (edge cases), give them single-instance names
-        for idx in swing_df[swing_df['regime_instance_id'].isnull()].index:
-            rid = swing_df.at[idx, 'hmm_regime']
-            swing_df.at[idx, 'regime_instance_id'] = _new_instance_name(rid, 0)
-            swing_df.at[idx, 'regime_instance_index'] = 0
-
-        return swing_df
-
 
 # ============================================================================
 # USAGE EXAMPLE
