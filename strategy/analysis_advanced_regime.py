@@ -935,6 +935,29 @@ class AdvancedRegimeDetectionSystem:
         # Legacy compatibility cache
         self.regime_cache = {}    
 
+    def _sanitize_label(self, label: str) -> str:
+        """
+        Make a safe single-word label from an arbitrary regime description.
+        Example: "Low-Vol Bull Trend" -> "Low-Vol_Bull_Trend"
+        """
+        if label is None:
+            return "Unknown_Regime"
+        
+        s = str(label)
+        # Replace whitespace and slashes with underscore
+        s = s.strip()
+        s = s.replace('/', '_').replace('\\', '_')
+        s = "_".join(s.split())  # spaces -> underscore
+        
+        # Remove characters that are not alphanumeric, dash, or underscore
+        import re
+        s = re.sub(r'[^A-Za-z0-9_\-]', '', s)
+        
+        if s == "":
+            s = "Regime"
+        
+        return s
+
     def _compute_local_slope(self, df, i, window=5):
         """Compute the slope of close prices around index i."""
         start = max(0, i - window)
@@ -1414,12 +1437,12 @@ class AdvancedRegimeDetectionSystem:
             
             segmented = self._segment_regime_instances(
                 swing_df,
-                min_instance_swings=6,
-                max_instance_swings=500,
-                vol_jump_pct=0.4,
+                min_instance_swings=3,
+                max_instance_swings=40,
+                vol_jump_pct=0.15,
                 slope_sign_change=True,
-                require_structure_rotation=True,
-                low_confidence_threshold=0.45
+                require_structure_rotation=False,
+                low_confidence_threshold=0.50
             )
             
             # Build index mapping: bar_index -> (instance_id, instance_index)
@@ -1633,11 +1656,11 @@ class AdvancedRegimeDetectionSystem:
     def _segment_regime_instances(
         self,
         swing_df: pd.DataFrame,
-        min_instance_swings: int = 6,
-        max_instance_swings: int = 300,
-        vol_jump_pct: float = 0.4,
+        min_instance_swings: int = 3,
+        max_instance_swings: int = 40,
+        vol_jump_pct: float = 0.15,
         slope_sign_change: bool = True,
-        require_structure_rotation: bool = True,
+        require_structure_rotation: bool = False,
         low_confidence_threshold: float = 0.5
     ) -> pd.DataFrame:
         """
@@ -1657,6 +1680,27 @@ class AdvancedRegimeDetectionSystem:
         - 'regime_instance_id'  (str): like "R{regime}_I{n}"
         - 'regime_instance_index' (int): 0-based index within regime type
         """
+            # Calculate data-driven thresholds
+        if 'atr_ratio' in swing_df.columns:
+            atr_values = swing_df['atr_ratio'].dropna()
+            if len(atr_values) > 10:
+                # Use percentile-based threshold instead of fixed 0.4
+                atr_std = atr_values.std()
+                adaptive_vol_jump = min(0.3, max(0.10, atr_std * 2))  # 10-30% range
+                print(f"     Adaptive vol_jump_pct: {adaptive_vol_jump:.2%}")
+                kwargs['vol_jump_pct'] = adaptive_vol_jump
+        
+        # Calculate adaptive max_instance_swings based on total swings
+        total_swings = len(swing_df)
+        if total_swings < 100:
+            kwargs['max_instance_swings'] = 20
+        elif total_swings < 500:
+            kwargs['max_instance_swings'] = 40
+        else:
+            kwargs['max_instance_swings'] = 60
+        
+        print(f"     Adaptive max_instance_swings: {kwargs['max_instance_swings']}")
+        
 
         df = swing_df.reset_index(drop=True).copy()
 
