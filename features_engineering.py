@@ -744,7 +744,6 @@ class FeatureEngineerOptimized:
         cols = {}
         
         # ============ CANDLESTICK PATTERNS (Optimized) ============
-        print("  Calculating candlestick patterns...")
         body = (df['close'] - df['open']).abs()
         range_hl = df['high'] - df['low']
         upper_shadow = df['high'] - df[['open', 'close']].max(axis=1)
@@ -795,7 +794,6 @@ class FeatureEngineerOptimized:
         cols = {}
         
         # ============ CHART PATTERNS ============
-        print("  Calculating chart patterns...")
         for name, func in CHART_PATTERN_FUNCS.items():
             try:
                 df[name] = func(df).fillna(False).astype(int)
@@ -803,7 +801,6 @@ class FeatureEngineerOptimized:
                 df[name] = 0
         
         # ============ PULLBACK INDICATORS (Optimized) ============
-        print("  Calculating pullback indicators...")
         
         # *** CRITICAL FIX: DATA LEAKAGE ***
         # Swing points loop is still slow, but now it is *correct*.
@@ -1123,8 +1120,6 @@ class FeatureEngineerOptimized:
         # ============ REGIME ANALYSIS PRE-CALCULATIONS ============
         # These are features that analysis_advanced_regime.py
         # will read at each swing point.
-
-        print("  Calculating regime pre-calc features...")
         
         # Trend features
         cols['local_slope'] = (df['close'] - df['close'].shift(10)) / 10 / df['close']
@@ -1201,9 +1196,6 @@ class FeatureEngineerOptimized:
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
 
-        
-        print("  ✓ All indicators calculated successfully")
-        
         # Final merge and defragmentation
         if cols:
             df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)

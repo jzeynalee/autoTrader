@@ -1365,22 +1365,13 @@ class RegimeStrategyDiscovery:
         self.regime_states_map: Dict[int, RegimeState] = regime_system.hmm_classifier.regime_states
         self.indicator_rules = StrategyIndicatorRules()
         self.strategy_repository: Dict[int, Dict] = {}  # Changed key type to int
-        print("✅ RegimeStrategyDiscovery initialized.")
 
     def discover_strategies(self) -> Dict[str, Dict]:
         """
         Analyzes the HybridSwingRegistry and builds the strategy repository per *regime instance*.
         Returns:
             Dict[str, Dict]: mapping regime_instance_id -> playbook metadata
-        """
-        print("  Discovering strategy playbook (instance-level)...")
-
-        # ✅ ADD THIS DIAGNOSTIC
-        print(f"  Using indicator rules: {type(self.indicator_rules).__name__}")
-        print(f"  Checking {len(self.indicator_rules.momentum_indicators)} momentum indicators")
-        print(f"  Checking {len(self.indicator_rules.trend_indicators)} trend indicators")
-        print(f"  Checking {len(self.indicator_rules.volume_indicators)} volume indicators")
-    
+        """   
         
         swing_df = self.regime_system.registry.to_dataframe()
         
@@ -1488,8 +1479,6 @@ class RegimeStrategyDiscovery:
                 'confirming_indicators': sorted(list(sets['confirming_indicators'])),
                 'strategy_patterns': sorted(list(sets['strategy_patterns']))
             }
-
-        print("  ✅ Strategy playbook discovery (instance-level) complete.")
         return self.strategy_repository
 
     def get_repository(self) -> Dict[int, Dict]:

@@ -91,7 +91,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         
         pair_tfs = self.db.get_all_calculated_pair_tfs() 
         if not pair_tfs:
-            print("No calculated feature data found in the database.")
             return False
             
         loaded_count = 0
@@ -148,7 +147,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         return aligned_dfs
 
     def optimize_data_loading(self):
-        print("Optimizing memory usage...")
         for pair_tf, df in self.all_dataframes.items():
             original_memory = df.memory_usage(deep=True).sum() / 1024**2
             
@@ -167,7 +165,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             
             optimized_memory = df.memory_usage(deep=True).sum() / 1024**2
             reduction = (original_memory - optimized_memory) / original_memory * 100
-            print(f"  {pair_tf}: {original_memory:.1f}MB → {optimized_memory:.1f}MB ({reduction:.1f}% reduction)")
 
     def get_or_compute_states(self, df, column_name, pair_tf, use_cache=True):
         """
@@ -373,9 +370,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
     
     def discover_multi_signal_strategies(self):
         """Parallel strategy discovery"""
-        print("\n" + "="*80)
-        print("DISCOVERING MULTI-SIGNAL STRATEGIES")
-        print("="*80)
         
         strategy_id = 0
         total_found = 0 # <-- FIX for logging
@@ -433,9 +427,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         by analyzing rows where price moved significantly and finding
         ALL confirming indicators/patterns active at that moment.
         """
-        print("\n" + "="*80)
-        print("DISCOVERING COMBINATION STRATEGIES")
-        print("="*80)
         
         combination_strategies = []
         strategy_id = len(self.strategy_pool) + 1
@@ -552,7 +543,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
     def enhanced_market_regime_detection(self, df):
         """Routes the regime calculation request to the specialized module."""
         if self.regime_detector is None:
-            print("  ⚠️  Regime Detector not initialized. Skipping regime detection.")
             df['historical_regime'] = 'unknown' # Add fallback column
             return df
         
@@ -658,12 +648,7 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         
         pattern_effectiveness.sort(key=lambda x: x['overall_accuracy'], reverse=True)
         
-        print("\nTOP 20 MOST EFFECTIVE PATTERNS:")
-        print("─"*80)
-        
         for i, p in enumerate(pattern_effectiveness[:20], 1):
-            print(f"\n#{i} {p['pattern']}")
-            print(f"  Overall Accuracy: {p['overall_accuracy']:.2%} ({p['total_occurrences']} occurrences)")
             if p['bullish_count'] > 0:
                 print(f"  Bullish: {p['bullish_accuracy']:.2%} ({p['bullish_count']} times)")
             if p['bearish_count'] > 0:
