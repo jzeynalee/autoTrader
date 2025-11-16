@@ -196,7 +196,7 @@ def run_strategy_discovery(db_connector):
     except Exception as e:
         print(f"  ❌ An error occurred during playbook discovery: {e}")
 
-
+    return
     # ============================================================================
     # PHASE 2: STRATEGY DISCOVERY (SINGLE PASS)
     # ============================================================================

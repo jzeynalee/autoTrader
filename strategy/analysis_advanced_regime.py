@@ -1,16 +1,16 @@
 """
 analysis_advanced_regime.py - REFACTORED
-Hybrid ZigZag-Price Action Regime Detection Framework
+Hybrid Price Action Regime Detection Framework
 
 This module implements a comprehensive regime detection system that:
-1. Extracts ZigZag swing points for structural consistency
+1. Extracts Price Action swing points for structural consistency
 2. Builds a Hybrid Swing Registry with rich price action metadata
 3. Uses GaussianHMM for unsupervised regime classification
 4. Uses XGBoost for supervised regime prediction
 5. Provides adaptive strategy parameters per regime
 
 Architecture:
-    OHLCV Data → ZigZag Swing Extraction → Hybrid Swing Registry
+    OHLCV Data → Price Action Swing Extraction → Hybrid Swing Registry
     → Feature Engineering Layer (price action, volume, structure)
     → GaussianHMM (Unsupervised Regime Detection)
     → XGBoost (Supervised Regime Prediction)
@@ -77,7 +77,7 @@ class SwingPoint:
     swing_type: str  # 'high' or 'low'
     price: float
     
-    # ZigZag structural fields
+    # structural fields
     magnitude_pct: float = 0.0
     duration: int = 0
     atr_context: float = 0.0
@@ -292,51 +292,6 @@ class HybridSwingRegistry:
             self._enrich_swing_with_features(swing, df, idx)
             
             self.swings.append(swing)
-    
-    '''def _enrich_swing_with_features(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> None:
-        """
-        Augment swing with all price action, volume, structure, and momentum features.
-        """
-        if idx >= len(df):
-            return
-        
-        # === TREND FEATURES ===
-        swing.local_slope = self._calculate_local_slope(df, idx, window=10)
-        swing.return_gradient = self._calculate_return_gradient(df, idx, window=5)
-        swing.directional_persistence = self._calculate_directional_persistence(df, idx, window=10)
-        
-        # === VOLATILITY FEATURES ===
-        swing.atr_ratio = self._get_safe_value(df, idx, 'atr', default=1.0) / df['close'].iloc[idx]
-        swing.bb_width = self._get_safe_value(df, idx, 'bb_width', default=0.0)
-        swing.kc_width = self._get_safe_value(df, idx, 'kc_width', default=0.0)
-        swing.normalized_variance = self._calculate_normalized_variance(df, idx, window=20)
-        
-        # === MOMENTUM FEATURES ===
-        swing.rsi = self._get_safe_value(df, idx, 'rsi', default=50.0)
-        swing.roc = self._get_safe_value(df, idx, 'roc', default=0.0)
-        swing.ppo = self._get_safe_value(df, idx, 'ppo', default=0.0)
-        swing.macd_hist = self._get_safe_value(df, idx, 'macd_hist', default=0.0)
-        swing.adx = self._get_safe_value(df, idx, 'adx', default=0.0)
-        
-        # === VOLUME FEATURES ===
-        swing.volume_roc = self._calculate_volume_roc(df, idx, window=5)
-        swing.obv_change = self._calculate_obv_change(df, idx)
-        swing.volume_zscore = self._calculate_volume_zscore(df, idx, window=20)
-        
-        # === STRUCTURE FEATURES ===
-        swing.structure_type = self._classify_swing_structure(swing, df, idx)
-        swing.structure_break = self._detect_structure_break(df, idx)
-        swing.pullback_depth = self._get_safe_value(df, idx, 'pullback_from_high_pct', default=0.0)
-        
-        # === CANDLE CONTEXT ===
-        swing.recent_bullish_patterns = self._count_recent_patterns(df, idx, pattern_type='bullish')
-        swing.recent_bearish_patterns = self._count_recent_patterns(df, idx, pattern_type='bearish')
-        swing.recent_doji = self._count_recent_patterns(df, idx, pattern_type='doji')
-        
-        # === PRICE ACTION ANOMALIES ===
-        swing.gap_intensity = self._calculate_gap_intensity(df, idx)
-        swing.extended_bar_ratio = self._calculate_extended_bar_ratio(df, idx)
-        swing.volume_spike = self._detect_volume_spike(df, idx)'''
     
     def _enrich_swing_with_features(self, swing: SwingPoint, df: pd.DataFrame, idx: int) -> None:
         """
