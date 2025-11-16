@@ -122,81 +122,93 @@ def run_strategy_discovery(db_connector):
     # --- NEW PHASE 1.5: REGIME STRATEGY PLAYBOOK DISCOVERY ---
     # ============================================================================
     print("\n" + "="*80)
-    print("PHASE 1.5: REGIME STRATEGY PLAYBOOK DISCOVERY")
+    print("PHASE 1.5: REGIME INSTANCE DISCOVERY & STATISTICAL ANALYSIS")
     print("="*80)
-    
-    strategy_playbook = {}
-    try:
-        # We assume system.regime_detector is the trained instance
-        # from the AdvancedRegimeDetectionSystem, containing the HMM models
-        # from the *last* dataframe processed in Phase 1.
-        if system.regime_detector and system.regime_detector.hmm_classifier:
-            
-            regime_states = system.regime_detector.hmm_classifier.regime_states
-            print(f"  ✅ HMM model loaded with {len(regime_states)} total regimes.")
-            
-            print("  🤖 Initializing RegimeStrategyDiscovery...")
-            strategy_discoverer = RegimeStrategyDiscovery(system.regime_detector)
-            
-            print("  🔍 Discovering strategy playbook from regime swings...")
-            strategy_playbook = strategy_discoverer.discover_strategies()
-            
-            print(f"  ✅ Found {len(strategy_playbook)} distinct regime playbooks.")
 
-            strategy_discoverer.print_repository_summary()
-            
-            # --- Temporary JSON Solution ---
-            playbook_filename = 'regime_strategy_playbook.json'
-            try:
-                with open(playbook_filename, 'w') as f:
-                    json.dump(strategy_playbook, f, indent=2)
-                print(f"  ✅ Saved temporary playbook to {playbook_filename}")
-                export_files.append(playbook_filename) # Add to final report
-            except Exception as e:
-                print(f"  ⚠️  Failed to save temporary playbook JSON: {e}")
+    from regime_instance_engine import RegimeInstanceEngine
+    from regime_data_access import RegimeDataAccess
+    from regime_statistical_analysis import RegimeStatisticalAnalyzer
 
-            # --- Permanent Database Solution ---
-            print("  💾 Persisting instance-level playbook to database...")
-            if db_connector:
-                rows_upserted = 0
-                for inst_key, data in strategy_playbook.items():
-                    try:
+    # Initialize components
+    instance_engine = RegimeInstanceEngine(
+        min_bars_per_instance=24,
+        max_bars_per_instance=168,
+        volatility_threshold=0.25,
+    )
 
-                        db_record = {
-                            'regime_instance_id': data.get('regime_instance_id', inst_key),
-                            'regime_type': data.get('regime_type'),
-                            'regime_id': data.get('regime_type'),
-                            'regime_name': data.get('regime_name'),
-                            'trend_direction': data.get('trend_direction'),
-                            'volatility_level': data.get('volatility_level'),
-                            'confirming_indicators_json': json.dumps(data.get('confirming_indicators', [])),
-                            'strategy_patterns_json': json.dumps(data.get('strategy_patterns', [])),
-                            'last_updated': datetime.now()
-                        }
+    regime_dao = RegimeDataAccess(db_connector)
+    analyzer = RegimeStatisticalAnalyzer(regime_dao)
 
-                        # DB connector must implement upsert_strategy_playbook_instance or reuse previous function
-                        if hasattr(db_connector, 'upsert_strategy_playbook_instance'):
-                            db_connector.upsert_strategy_playbook_instance(db_record)
-                        else:
-                            # fallback to old method which expects regime_id - adapt if needed
-                            db_connector.upsert_strategy_playbook(db_record)
-                        rows_upserted += 1
-                    except Exception as e:
-                        print(f"  ⚠️  Failed to upsert instance '{inst_key}' to DB: {e}")
-                print(f"  ✅ Successfully upserted {rows_upserted} regime-instance playbooks to DB.")
-            else:
-                print("  ⚠️  No db_connector found. Skipping database persistence.")
+    # Discover and store instances
+    all_instances = {}
+    total_instances = 0
 
-        else:
-            print("  ⚠️  system.regime_detector not found or HMM not trained. Skipping playbook discovery.")
-            
-    except ValueError as e:
-        print(f"  ⚠️  Failed to initialize RegimeStrategyDiscovery: {e}")
-        print("     This likely means the HMM model in AdvancedRegimeDetectionSystem was not trained.")
-    except Exception as e:
-        print(f"  ❌ An error occurred during playbook discovery: {e}")
+    for pair_tf, df in system.all_dataframes.items():
+        pair, timeframe = pair_tf.rsplit('_', 1)
+        
+        instances = instance_engine.discover_instances(df, pair, timeframe)
+        
+        for instance in instances:
+            regime_dao.store_regime_instance(instance)
+        
+        all_instances[pair_tf] = instances
+        total_instances += len(instances)
 
-    return
+    print(f"\n✅ Discovered & Stored: {total_instances} regime instances")
+
+    # Run statistical analysis on top indicators
+    print("\n🔬 Running Statistical Analysis...")
+
+    top_indicators = [
+        'rsi', 'macd_hist', 'ppo', 'adx', 'bb_width', 
+        'obv', 'volume_zscore', 'atr_percent'
+    ]
+
+    indicator_analysis = {}
+
+    for indicator in top_indicators:
+        try:
+            result = analyzer.analyze_indicator_causality(indicator)
+            if 'error' not in result:
+                indicator_analysis[indicator] = result
+                print(f"  {indicator:20s} | Power: {result['predictive_power']:5.1f} | {result['recommendation']}")
+        except Exception as e:
+            print(f"  ⚠️ Error analyzing {indicator}: {e}")
+
+    # Find optimal combinations
+    print("\n🎯 Finding Optimal Indicator Combinations...")
+    combinations = analyzer.find_optimal_indicator_combinations(max_indicators=5)
+
+    if combinations:
+        print(f"\nTop 5 Indicator Combinations:")
+        for i, combo in enumerate(combinations[:5], 1):
+            indicators_str = ' + '.join(combo['indicators'])
+            print(f"  {i}. {indicators_str}")
+            print(f"     Win Rate: {combo['win_rate']:.1f}% | Avg Return: {combo['avg_return']:.2f}% | Samples: {combo['sample_size']}")
+
+    # Store analysis results
+    if db_connector:
+        try:
+            db_connector.execute("""
+                INSERT INTO statistical_experiments (
+                    experiment_name,
+                    experiment_type,
+                    parameters_json,
+                    results_json,
+                    sample_size,
+                    run_time
+                ) VALUES (%s, %s, %s, %s, %s, NOW())
+            """, (
+                'Indicator Causality Analysis',
+                'causality',
+                json.dumps({'indicators': top_indicators}),
+                json.dumps(indicator_analysis),
+                total_instances
+            ))
+        except Exception as e:
+            print(f"  ⚠️ Failed to store analysis results: {e}")
+
+    print("\n✅ Statistical Analysis Complete")
     # ============================================================================
     # PHASE 2: STRATEGY DISCOVERY (SINGLE PASS)
     # ============================================================================
