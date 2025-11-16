@@ -558,9 +558,6 @@ class GaussianHMMRegimeClassifier:
         
         # Build regime state objects
         self._build_regime_states()
-        
-        print(f"✅ HMM trained with {self.n_regimes} regimes")
-        print(f"   Converged: {self.model.monitor_.converged}")
     
     def predict(self, swing_df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -844,13 +841,6 @@ class XGBoostRegimePredictor:
         train_acc = accuracy_score(y_train, y_pred_train)
         test_acc = accuracy_score(y_test, y_pred_test)
         
-        print(f"✅ XGBoost trained")
-        print(f"   Train Accuracy: {train_acc:.2%}")
-        print(f"   Test Accuracy: {test_acc:.2%}")
-        
-        # Print classification report
-        print("\n" + classification_report(y_test, y_pred_test, zero_division=0))
-    
     def predict(self, swing_df: pd.DataFrame, current_regimes: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict next regime for each swing.
@@ -1628,7 +1618,7 @@ class AdvancedRegimeDetectionSystem:
         # ADAPTIVE THRESHOLD CALCULATION (OPTIONAL ENHANCEMENT)
         # =========================================================================
         
-        # Calculate data-driven thresholds if possible
+        '''# Calculate data-driven thresholds if possible
         if 'atr_ratio' in df.columns:
             atr_values = df['atr_ratio'].dropna()
             if len(atr_values) > 10:
@@ -1639,7 +1629,7 @@ class AdvancedRegimeDetectionSystem:
                 # Only override if adaptive threshold is more reasonable
                 if adaptive_vol_jump < vol_jump_pct:
                     print(f"     Adaptive vol_jump_pct: {adaptive_vol_jump:.2%} (was {vol_jump_pct:.2%})")
-                    vol_jump_pct = adaptive_vol_jump
+                    vol_jump_pct = adaptive_vol_jump'''
         
         # Calculate adaptive max_instance_swings based on total swings
         total_swings = len(df)

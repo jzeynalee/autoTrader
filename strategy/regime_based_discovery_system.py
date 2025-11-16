@@ -1365,40 +1365,41 @@ class RegimeStrategyDiscovery:
         self.regime_states_map: Dict[int, RegimeState] = regime_system.hmm_classifier.regime_states
         self.indicator_rules = StrategyIndicatorRules()
         self.strategy_repository: Dict[int, Dict] = {}  # Changed key type to int
-
+    
     def discover_strategies(self) -> Dict[str, Dict]:
         """
         Analyzes the HybridSwingRegistry and builds the strategy repository per *regime instance*.
         Returns:
             Dict[str, Dict]: mapping regime_instance_id -> playbook metadata
-        """   
+        """
         
         swing_df = self.regime_system.registry.to_dataframe()
         
         if 'hmm_regime' not in swing_df.columns:
-            print("  ⚠️ 'hmm_regime' column not found in swing registry. Run HMM first.")
+            print("  ⚠️  'hmm_regime' column not found. Run HMM first.")
             return {}
         
         # Prefer instance-level key if available
         if 'regime_instance_id' in swing_df.columns:
             keys = swing_df['regime_instance_id'].dropna().unique().tolist()
         else:
-            # fallback to regime ids as strings
             keys = swing_df['hmm_regime'].dropna().unique().astype(int).tolist()
             keys = [f"R{k}" for k in keys]
 
-        # initialize temp repository per instance
+        # Initialize repositories
         temp_repository: Dict[str, Dict[str, Set]] = {}
         instance_meta: Dict[str, Dict] = {}
         
-        # Build initial entries
         for inst in keys:
             temp_repository[inst] = {
                 'confirming_indicators': set(),
                 'strategy_patterns': set()
             }
 
-        # Iterate swings and assign to instance buckets
+        # ========================================================================
+        # Group swings by instance FIRST
+        # ========================================================================
+        instance_groups = {}
         for _, row in swing_df.iterrows():
             inst_key = None
             if 'regime_instance_id' in swing_df.columns and pd.notna(row.get('regime_instance_id')):
@@ -1408,77 +1409,111 @@ class RegimeStrategyDiscovery:
             else:
                 continue
 
-            # ensure present
+            if inst_key not in instance_groups:
+                instance_groups[inst_key] = []
+            
+            instance_groups[inst_key].append(row)
+        
+        # ========================================================================
+        # Process each instance with aggregated data
+        # ========================================================================
+        for inst_key, swings in instance_groups.items():
+            if len(swings) == 0:
+                continue
+                
             if inst_key not in temp_repository:
                 temp_repository[inst_key] = {
                     'confirming_indicators': set(),
                     'strategy_patterns': set()
                 }
-
+            
+            # Get regime metadata
+            first_swing = swings[0]
             regime_id = None
-            if 'hmm_regime' in row and pd.notna(row['hmm_regime']):
-                regime_id = int(row['hmm_regime'])
+            if 'hmm_regime' in first_swing and pd.notna(first_swing['hmm_regime']):
+                regime_id = int(first_swing['hmm_regime'])
             
             regime_state = self.regime_states_map.get(regime_id) if regime_id is not None else None
             
-            # Try to get regime_label from multiple sources
+            # Get regime label
             regime_label = None
-            
-            # First try: from regime_type_map (best option)
             if hasattr(self.regime_system, 'regime_type_map') and regime_id is not None:
                 regime_label = self.regime_system.regime_type_map.get(regime_id)
             
-            # Second try: from swing row itself
-            if not regime_label and 'regime_type' in row and pd.notna(row.get('regime_type')):
-                regime_label = row['regime_type']
+            if not regime_label and 'regime_type' in first_swing and pd.notna(first_swing.get('regime_type')):
+                regime_label = first_swing['regime_type']
             
-            # Third try: from regime_state name
             if not regime_label and regime_state:
                 regime_label = regime_state.name
             
-            # Fallback: generic name
             if not regime_label:
                 regime_label = f"Regime {regime_id}" if regime_id is not None else "Unknown"
             
-            # Get confirmations
+            # ====================================================================
+            # Create AGGREGATED row (median values across all swings)
+            # ====================================================================
+            aggregated_row = pd.Series()
+            
+            for col in swing_df.columns:
+                values = [s[col] for s in swings if pd.notna(s.get(col))]
+                
+                if len(values) == 0:
+                    continue
+                
+                # Numeric: use median
+                if pd.api.types.is_numeric_dtype(swing_df[col]):
+                    aggregated_row[col] = np.median(values)
+                # Categorical: use mode (most common)
+                else:
+                    from collections import Counter
+                    counter = Counter(values)
+                    aggregated_row[col] = counter.most_common(1)[0][0]
+            
+            # ====================================================================
+            # Get confirmations from SINGLE aggregated row
+            # ====================================================================
             indicators, patterns = [], []
             if regime_state:
                 if regime_state.trend_direction == 'bull':
-                    indicators, patterns = self.indicator_rules.get_bullish_confirmations(row)
+                    indicators, patterns = self.indicator_rules.get_bullish_confirmations(aggregated_row)
                 elif regime_state.trend_direction == 'bear':
-                    indicators, patterns = self.indicator_rules.get_bearish_confirmations(row)
+                    indicators, patterns = self.indicator_rules.get_bearish_confirmations(aggregated_row)
                 else:
-                    indicators, patterns = self.indicator_rules.get_ranging_confirmations(row)
+                    indicators, patterns = self.indicator_rules.get_ranging_confirmations(aggregated_row)
             else:
-                indicators, patterns = self.indicator_rules.get_ranging_confirmations(row)
+                indicators, patterns = self.indicator_rules.get_ranging_confirmations(aggregated_row)
 
+            # Add to repository (sets auto-deduplicate)
             temp_repository[inst_key]['confirming_indicators'].update(indicators)
             temp_repository[inst_key]['strategy_patterns'].update(patterns)
 
-            # Store instance meta if not already
+            # Store metadata
             if inst_key not in instance_meta:
                 instance_meta[inst_key] = {
                     'regime_type': regime_id,
-                    'regime_label': regime_label,  # Human-readable label
+                    'regime_label': regime_label,
                     'regime_name': regime_state.name if regime_state else f"R{regime_id}",
                     'trend_direction': regime_state.trend_direction if regime_state else 'unknown',
                     'volatility_level': regime_state.volatility_level if regime_state else 'unknown',
                 }
 
-        # Build final repository keyed by instance_id
+        # ========================================================================
+        # Build final repository
+        # ========================================================================
         self.strategy_repository = {}
         for inst_key, sets in temp_repository.items():
             meta = instance_meta.get(inst_key, {})
             self.strategy_repository[inst_key] = {
                 'regime_instance_id': inst_key,
                 'regime_type': meta.get('regime_type'),
-                'regime_label': meta.get('regime_label'),  # Add this field
+                'regime_label': meta.get('regime_label'),
                 'regime_name': meta.get('regime_name'),
                 'trend_direction': meta.get('trend_direction', 'unknown'),
                 'volatility_level': meta.get('volatility_level', 'unknown'),
                 'confirming_indicators': sorted(list(sets['confirming_indicators'])),
                 'strategy_patterns': sorted(list(sets['strategy_patterns']))
             }
+
         return self.strategy_repository
 
     def get_repository(self) -> Dict[int, Dict]:

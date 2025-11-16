@@ -136,8 +136,6 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Corrected for lookahead bias.
         Receives dataframes as arguments to prevent redundant loads.
         """
-        print(f"  Discovering Mode A strategies for {group_name} (HTF & TTF & LTF cascade)...")
-
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
 
@@ -234,8 +232,6 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Corrected for lookahead bias.
         Receives dataframes as arguments to prevent redundant loads.
         """
-        print(f"  Discovering Mode B strategies for {group_name} (2-of-3 confluence)...")
-
         if any(df is None for df in (htf_df, ttf_df, ltf_df)):
             return []
 
@@ -339,8 +335,6 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Corrected for lookahead bias.
         Receives dataframes as arguments to prevent redundant loads.
         """
-        print(f"  Discovering Mode C strategies for {group_name} (weighted cascade)...")
-
         if any(df is None for df in (htf_df, ttf_df, ltf_df)):
             return []
 
@@ -433,8 +427,6 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Mode D: ADVANCED Price Action with Multi-Signal Confluence
         Uses 3-5 signals per timeframe for high-quality setups
         """
-        print(f"  Discovering Mode D (Advanced Price Action) strategies for {group_name}...")
-        
         if htf_df is None:
             return []
         
@@ -3154,8 +3146,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         pair = "btc_usdt" # Define the pair once for the entire run
         
         for group_name in sorted_groups:
-            print(f"\nAnalyzing {group_name}.")
-
+            
             # -----------------------------
             # Enforce HTF -> TTF -> LTF order
             # -----------------------------
@@ -3324,7 +3315,6 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 if states is not None:
                     bullish = (states == 'bullish').sum()
                     bearish = (states == 'bearish').sum()
-                    print(f"    ✓ {pattern}: {count} non-zero | {bullish} bullish | {bearish} bearish")
                 else:
                     print(f"    ✗ {pattern}: EXISTS but NOT MAPPED!")
             else:

@@ -390,8 +390,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
             if not isinstance(df, pd.DataFrame) or df.empty:
                 print(f"⚠️ Skipping {pair_tf}: Data structure invalid or empty.")
                 continue
-            print(f"\nAnalyzing {pair_tf}.")
-
             df = self.identify_price_states(df)
             self.all_dataframes[pair_tf] = df
             categories = self.categorize_columns(df)
@@ -433,7 +431,6 @@ class StrategyDiscoverySystem(DiscoveryModesMixin, ReportsMixin, PatternsMixin, 
         
         # Process each timeframe
         for pair_tf, df in self.all_dataframes.items():
-            print(f"\nAnalyzing {pair_tf} for combinations...")
             
             if 'price_state' not in df.columns:
                 df = self.identify_price_states(df)
