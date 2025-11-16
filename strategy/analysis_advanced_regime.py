@@ -865,8 +865,8 @@ class AdvancedRegimeDetectionSystem:
     
     def __init__(
         self,
-        atr_multiplier: float = 2.0,
-        min_bars: int = 5,
+        atr_multiplier: float = 1.0,
+        min_bars: int = 3,
         n_regimes: int = 6,
         random_state: int = 42
     ):
@@ -935,6 +935,15 @@ class AdvancedRegimeDetectionSystem:
         """
 
         swings = []
+
+        # Try pre-computed first
+        if 'swing_high' in df.columns and 'swing_low' in df.columns:
+            if df['swing_high'].sum() > 0 and df['swing_low'].sum() > 0:
+                return self._extract_from_precomputed(df, lookback)
+            else:
+                # Fallback: use ZigZag extractor
+                print("  ⚠️ Pre-computed swings missing/empty - using ZigZag fallback")
+                return self.zigzag.extract_swings(df)
 
         if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
             print("⚠️ swing_high/swing_low not found. Run feature engineering first.")
@@ -1275,6 +1284,34 @@ class AdvancedRegimeDetectionSystem:
 
     def detect_advanced_market_regimes(self, df: pd.DataFrame) -> pd.DataFrame:
         """Main function to add historical regime data to a DataFrame."""
+
+        print(f"\n{'='*80}")
+        print(f"REGIME DETECTION DIAGNOSTICS")
+        print(f"{'='*80}")
+        print(f"Dataset size: {len(df)} bars")
+        print(f"Date range: {df.index[0]} to {df.index[-1]}")
+        
+        # After swing extraction
+        print(f"\nSwing Extraction:")
+        print(f"  - Total swings detected: {len(swing_points)}")
+        print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
+        print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
+        
+        # After HMM
+        print(f"\nHMM Classification:")
+        print(f"  - Regime types detected: {len(np.unique(hmm_labels))}")
+        regime_counts = pd.Series(hmm_labels).value_counts()
+        for regime_id, count in regime_counts.items():
+            print(f"    Regime {regime_id}: {count} swings ({count/len(hmm_labels)*100:.1f}%)")
+        
+        # After instance segmentation
+        print(f"\nInstance Segmentation:")
+        instance_counts = swing_df['regime_instance_id'].value_counts()
+        print(f"  - Total instances created: {len(instance_counts)}")
+        print(f"  - Swings per instance (avg): {instance_counts.mean():.1f}")
+        print(f"  - Swings per instance (median): {instance_counts.median():.1f}")
+
+        
         
         if len(df) < 50:
             df['historical_regime'] = 'unknown'
@@ -1288,9 +1325,20 @@ class AdvancedRegimeDetectionSystem:
         
         df_analysis = df.copy()
         
-        # ========================================================================
+
+        # =============================================================================
         # PHASE 1: Extract Price Action Swings
-        # ========================================================================
+        # =============================================================================
+        assert 'swing_high' in df.columns, "swing_high column missing - run feature engineering"
+        assert 'swing_low' in df.columns, "swing_low column missing - run feature engineering"
+        assert df['swing_high'].sum() > 0, "No swing highs detected in data"
+        assert df['swing_low'].sum() > 0, "No swing lows detected in data"
+
+        print(f"Pre-computed swings found:")
+        print(f"  - Swing highs: {df['swing_high'].sum()}")
+        print(f"  - Swing lows: {df['swing_low'].sum()}")
+        print(f"  - Total: {df['swing_high'].sum() + df['swing_low'].sum()}")
+
         swing_points = self._extract_feature_engineered_swings(df_analysis)
         
         if len(swing_points) < 10:
@@ -1382,6 +1430,38 @@ class AdvancedRegimeDetectionSystem:
         # ========================================================================
         # PHASE 4: XGBoost Prediction
         # ========================================================================
+        
+        def detect_regimes_hierarchical(self, dataframes_dict):
+            """
+            Detect regimes in HTF→LTF order with context passing.
+            
+            Args:
+                dataframes_dict: {'BTCUSDT_4h': df, 'BTCUSDT_1h': df, ...}
+            """
+            timeframe_order = ['4h', '1h', '15m', '5m', '1m']
+            results = {}
+            
+            htf_regime_context = None
+            
+            for tf in timeframe_order:
+                matching_keys = [k for k in dataframes_dict.keys() if k.endswith(f'_{tf}')]
+                
+                for key in matching_keys:
+                    df = dataframes_dict[key]
+                    
+                    # Pass HTF context to LTF detection
+                    if htf_regime_context is not None:
+                        df = self._align_with_htf_regimes(df, htf_regime_context, tf)
+                    
+                    df = self.detect_advanced_market_regimes(df)
+                    results[key] = df
+                    
+                    # Store as context for next timeframe
+                    if tf == '4h':
+                        htf_regime_context = df[['regime_instance_id', 'hmm_regime']].copy()
+            
+            return results
+
         if XGB_AVAILABLE and len(swing_df) >= 50:
             self.xgb_predictor = XGBoostRegimePredictor(
                 n_regimes=self.n_regimes,
@@ -1406,6 +1486,29 @@ class AdvancedRegimeDetectionSystem:
         # ========================================================================
         swing_df = self.registry.to_dataframe()
         df_analysis = self._map_regimes_to_dataframe(df_analysis, swing_df, hmm_labels)
+
+        
+        def persist_regime_instances_to_db(self, db_connector, pair_tf, swing_df):
+            """Store individual regime instances with metadata."""
+            
+            instances = swing_df.groupby('regime_instance_id')
+            
+            for inst_id, inst_df in instances:
+                record = {
+                    'regime_instance_id': inst_id,
+                    'pair_timeframe': pair_tf,
+                    'regime_type': inst_df['hmm_regime'].iloc[0],
+                    'regime_name': self.regime_type_map.get(inst_df['hmm_regime'].iloc[0]),
+                    'start_time': inst_df.index[0],
+                    'end_time': inst_df.index[-1],
+                    'swing_count': len(inst_df),
+                    'mean_atr_ratio': inst_df['atr_ratio'].mean(),
+                    'mean_rsi': inst_df['rsi'].mean(),
+                    'price_change_pct': ((inst_df['price'].iloc[-1] / inst_df['price'].iloc[0]) - 1) * 100,
+                    'created_at': datetime.now()
+                }
+                
+                db_connector.upsert_regime_instance(record)
         
         # ========================================================================
         # PHASE 6: Generate Legacy Columns
@@ -1413,6 +1516,28 @@ class AdvancedRegimeDetectionSystem:
         df_analysis = self._generate_legacy_columns(df_analysis)
         
         self.regime_cache[cache_key] = df_analysis
+
+        def _segment_regime_instances_vectorized(self, df, vol_jump_pct):
+            """Vectorized version using numpy operations."""
+            
+            # Convert to numpy arrays once
+            regime_labels = df['hmm_regime'].values
+            atr_ratio = df['atr_ratio'].values
+            local_slope = df['local_slope'].values
+            
+            # Compute all change flags at once
+            regime_changes = np.diff(regime_labels, prepend=regime_labels[0]) != 0
+            atr_changes = np.abs(np.diff(atr_ratio, prepend=0) / (atr_ratio + 1e-9)) > vol_jump_pct
+            slope_changes = (np.diff(np.sign(local_slope), prepend=0) != 0)
+            
+            # Combine triggers
+            split_points = regime_changes | atr_changes | slope_changes
+            
+            # Generate instance IDs
+            instance_indices = np.cumsum(split_points)
+            
+            return instance_indices
+
         
         print("  ✅ Regime detection complete")
         
@@ -1567,24 +1692,50 @@ class AdvancedRegimeDetectionSystem:
         - 'regime_instance_index' (int): 0-based index within regime type
         """
 
+        # Calculate adaptive thresholds based on data density
+        total_swings = len(df)
+        
+        # Adaptive min_instance_swings
+        if total_swings < 50:
+            adaptive_min = 2  # Very lenient for sparse data
+        elif total_swings < 100:
+            adaptive_min = 3
+        else:
+            adaptive_min = min(5, max(3, total_swings // 20))
+        
+        # Adaptive max_instance_swings
+        if total_swings < 100:
+            adaptive_max = 15  # Smaller segments for sparse data
+        elif total_swings < 500:
+            adaptive_max = 30
+        else:
+            adaptive_max = 60
+        
+        print(f"  Adaptive thresholds: min={adaptive_min}, max={adaptive_max}")
+        
+        # Use adaptive values
+        min_instance_swings = adaptive_min
+        max_instance_swings = adaptive_max
+
         df = swing_df.reset_index(drop=True).copy()
 
         # =========================================================================
         # ADAPTIVE THRESHOLD CALCULATION (OPTIONAL ENHANCEMENT)
         # =========================================================================
         
-        '''# Calculate data-driven thresholds if possible
-        if 'atr_ratio' in df.columns:
-            atr_values = df['atr_ratio'].dropna()
-            if len(atr_values) > 10:
-                # Use percentile-based threshold instead of fixed value
-                atr_std = atr_values.std()
-                adaptive_vol_jump = min(0.3, max(0.10, atr_std * 2))  # 10-30% range
+                    
+        for i in range(len(df)):
+            # Existing feature-based triggers
+            triggered = vol_change[k] or slope_change[k] or struct_change[k]
+            
+            # NEW: Time-based trigger
+            if seg_start < k:
+                time_diff = df.index[k] - df.index[seg_start]
+                days_elapsed = time_diff.total_seconds() / 86400
                 
-                # Only override if adaptive threshold is more reasonable
-                if adaptive_vol_jump < vol_jump_pct:
-                    print(f"     Adaptive vol_jump_pct: {adaptive_vol_jump:.2%} (was {vol_jump_pct:.2%})")
-                    vol_jump_pct = adaptive_vol_jump'''
+                if days_elapsed >= max_days_per_instance:
+                    print(f"    Time-based split after {days_elapsed:.1f} days")
+                    triggered = True
         
         # Calculate adaptive max_instance_swings based on total swings
         total_swings = len(df)
