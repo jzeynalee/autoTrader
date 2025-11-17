@@ -33,6 +33,51 @@ class DatabaseConnector:
             self.conn.close()
             print("Database connection closed.")
             
+    # ========================================================================
+    # GENERIC I/O (The missing method)
+    # ========================================================================
+
+    def execute(self, query: str, params: tuple = None, fetch: bool = False):
+        """
+        A generic, multipurpose method to execute any SQL query.
+
+        Args:
+            query (str): The SQL query to execute.
+            params (tuple, optional): Parameters to bind to the query.
+            fetch (bool):
+                - If True: Executes a SELECT query and returns all results (fetchall).
+                - If False: Executes an INSERT/UPDATE/DELETE query and commits.
+
+        Returns:
+            list: A list of rows (if fetch=True).
+            None: (if fetch=False or on error).
+        """
+        if not self.conn:
+            print("❌ Cannot execute: No database connection.")
+            return None
+        
+        cursor = self.conn.cursor()
+        
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            if fetch:
+                # For SELECT queries, fetch all results
+                # .fetchall() returns a list of row objects
+                return cursor.fetchall()
+            else:
+                # For INSERT/UPDATE/DELETE, commit the transaction
+                self.conn.commit()
+                return None
+                
+        except sqlite3.Error as e:
+            print(f"❌ Error executing query: {e}")
+            print(f"   Query: {query}")
+            return None
+    
     def create_tables(self):
         """Creates the necessary database tables if they don't exist."""
         if not self.conn:
