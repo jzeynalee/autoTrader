@@ -8,7 +8,7 @@ import pandas as pd
 import json
 from datetime import datetime
 from typing import List, Dict, Optional
-from regime_instance_engine import RegimeInstance
+from .regime_instance_engine import RegimeInstance
 
 class RegimeDataAccess:
     """

@@ -125,9 +125,9 @@ def run_strategy_discovery(db_connector):
     print("PHASE 1.5: REGIME INSTANCE DISCOVERY & STATISTICAL ANALYSIS")
     print("="*80)
 
-    from regime_instance_engine import RegimeInstanceEngine
-    from regime_data_access import RegimeDataAccess
-    from regime_statistical_analysis import RegimeStatisticalAnalyzer
+    from .regime_instance_engine import RegimeInstanceEngine
+    from .regime_data_access import RegimeDataAccess
+    from .regime_statistical_analysis import RegimeStatisticalAnalyzer
 
     # Initialize components
     instance_engine = RegimeInstanceEngine(

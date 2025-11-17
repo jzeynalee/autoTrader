@@ -849,7 +849,8 @@ class AdvancedRegimeDetectionSystem:
         # Try pre-computed first
         if 'swing_high' in df.columns and 'swing_low' in df.columns:
             if df['swing_high'].sum() > 0 and df['swing_low'].sum() > 0:
-                return self._extract_from_precomputed(df, lookback)
+                #return self._extract_from_precomputed(df, lookback)
+                pass
             else:
                 print("  ⚠️ Pre-computed swings missing/empty")
                 #return self.zigzag.extract_swings(df)
@@ -1200,28 +1201,6 @@ class AdvancedRegimeDetectionSystem:
         print(f"Dataset size: {len(df)} bars")
         print(f"Date range: {df.index[0]} to {df.index[-1]}")
         
-        # After swing extraction
-        #print(f"\nSwing Extraction:")
-        #print(f"  - Total swings detected: {len(swing_points)}")
-        #print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
-        #print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
-        
-        # After HMM
-        print(f"\nHMM Classification:")
-        print(f"  - Regime types detected: {len(np.unique(hmm_labels))}")
-        regime_counts = pd.Series(hmm_labels).value_counts()
-        for regime_id, count in regime_counts.items():
-            print(f"    Regime {regime_id}: {count} swings ({count/len(hmm_labels)*100:.1f}%)")
-        
-        # After instance segmentation
-        print(f"\nInstance Segmentation:")
-        instance_counts = swing_df['regime_instance_id'].value_counts()
-        print(f"  - Total instances created: {len(instance_counts)}")
-        print(f"  - Swings per instance (avg): {instance_counts.mean():.1f}")
-        print(f"  - Swings per instance (median): {instance_counts.median():.1f}")
-
-        
-        
         if len(df) < 50:
             df['historical_regime'] = 'unknown'
             df['regime_volatility'] = 'normal'
@@ -1265,6 +1244,12 @@ class AdvancedRegimeDetectionSystem:
             df_analysis['regime_trend'] = 'ranging'
             return df_analysis
         
+        # After swing extraction
+        print(f"\nSwing Extraction:")
+        print(f"  - Total swings detected: {len(swing_points)}")
+        print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
+        print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
+        
         # ========================================================================
         # PHASE 2: Build Hybrid Swing Registry
         # ========================================================================
@@ -1293,6 +1278,13 @@ class AdvancedRegimeDetectionSystem:
                 hmm_labels = np.zeros(len(swing_df), dtype=int)
         else:
             hmm_labels = np.zeros(len(swing_df), dtype=int)
+
+        # After HMM
+        print(f"\nHMM Classification:")
+        print(f"  - Regime types detected: {len(np.unique(hmm_labels))}")
+        regime_counts = pd.Series(hmm_labels).value_counts()
+        for regime_id, count in regime_counts.items():
+            print(f"    Regime {regime_id}: {count} swings ({count/len(hmm_labels)*100:.1f}%)")
         
         # ========================================================================
         # PHASE 3.5: Build Regime Type Map
@@ -1343,6 +1335,13 @@ class AdvancedRegimeDetectionSystem:
             
         except Exception as e:
             print(f"  ⚠️  Instance segmentation failed: {e}")
+           
+        # After instance segmentation
+        print(f"\nInstance Segmentation:")
+        instance_counts = swing_df['regime_instance_id'].value_counts()
+        print(f"  - Total instances created: {len(instance_counts)}")
+        print(f"  - Swings per instance (avg): {instance_counts.mean():.1f}")
+        print(f"  - Swings per instance (median): {instance_counts.median():.1f}")
         
         # ========================================================================
         # PHASE 4: XGBoost Prediction

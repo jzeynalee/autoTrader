@@ -32,7 +32,7 @@ from typing import Dict, List, Tuple, Set, Optional
 import json
 
 try:
-    from analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
+    from .analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
 except ImportError:
     print("Error: Could not import 'AdvancedRegimeDetectionSystem'.")
     print("Please ensure 'analysis_advanced_regime.py' is in the same Python path.")
@@ -1605,7 +1605,7 @@ def create_mock_indicator_data(length: int) -> pd.DataFrame:
 
 if __name__ == "__main__":
     try:
-        from analysis_advanced_regime import HMM_AVAILABLE, XGB_AVAILABLE, SKLEARN_AVAILABLE
+        from .analysis_advanced_regime import HMM_AVAILABLE, XGB_AVAILABLE, SKLEARN_AVAILABLE
     except ImportError:
         HMM_AVAILABLE = False
         XGB_AVAILABLE = False

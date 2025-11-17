@@ -541,7 +541,13 @@ class RegimeInstanceEngine:
         failed_count = 0
         
         if 'pullback_depth' in segment.columns:
-            pullbacks = segment[segment['pullback_depth'] > 0]
+            #pullbacks = segment[segment['pullback_depth'] > 0]
+            # Force the column to be numeric; strings/errors become NaN
+            numeric_pullback_depth = pd.to_numeric(segment['pullback_depth'], errors='coerce')
+
+            # Now, perform the comparison on the clean, numeric-only Series
+            pullbacks = segment[numeric_pullback_depth > 0]
+
             pullback_count = len(pullbacks)
             if pullback_count > 0:
                 pullback_depths = pullbacks['pullback_depth'].tolist()

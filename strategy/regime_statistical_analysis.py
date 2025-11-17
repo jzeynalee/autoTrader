@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple
-from regime_data_access import RegimeDataAccess
+from .regime_data_access import RegimeDataAccess
 
 class RegimeStatisticalAnalyzer:
     """
