@@ -59,10 +59,10 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision lo
 @dataclass
 class SwingPoint:
     """
-    Canonical representation of a swing point in the Hybrid Swing Registry.
+    Canonical representation of a swing point in the Swing Registry.
     
     Each swing encapsulates:
-    - Core ZigZag fields: type, magnitude, duration, ATR context
+    - Core fields: type, magnitude, duration, ATR context
     - Trend features: slope, return gradient, directional persistence
     - Volatility features: ATR ratios, BB/KC width, normalized variance
     - Momentum features: RSI, ROC, PPO, MACD
@@ -156,96 +156,8 @@ class RegimeState:
 
 
 # ============================================================================
-# SECTION 2: ZIGZAG SWING EXTRACTION
+# SECTION 2: ZIGZAG SWING EXTRACTION (Deleted Completely)
 # ============================================================================
-
-class ZigZagSwingExtractor:
-    """
-    Extracts structural swing points using ZigZag algorithm with ATR-based threshold.
-    Ensures cross-timeframe consistency and structural uniformity.
-    """
-    
-    def __init__(self, atr_multiplier: float = 2.0, min_bars: int = 5):
-        """
-        Args:
-            atr_multiplier: Minimum swing size as multiple of ATR
-            min_bars: Minimum bars between swings
-        """
-        self.atr_multiplier = atr_multiplier
-        self.min_bars = min_bars
-
-    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate Average True Range."""
-        high = df['high']
-        low = df['low']
-        close = df['close']
-        
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=period, min_periods=1).mean()
-        
-        return atr
-
-    def extract_swings(self, df: pd.DataFrame) -> List[Dict]:
-        """
-        Extract ZigZag swing points from OHLC data.
-        
-        Returns:
-            List of swing dictionaries with basic structural info
-        """
-        if len(df) < 20:
-            return []
-        
-        # Calculate ATR for threshold
-        atr = self._calculate_atr(df, period=14)
-        threshold = atr.iloc[-1] * self.atr_multiplier if len(atr) > 0 else df['close'].std() * 0.02
-        
-        swings = []
-        last_swing_idx = 0
-        last_swing_price = df['close'].iloc[0]
-        last_swing_type = None
-        
-        for i in range(self.min_bars, len(df)):
-            current_price = df['close'].iloc[i]
-            price_change = abs(current_price - last_swing_price)
-            
-            # Check for significant move
-            if price_change >= threshold and (i - last_swing_idx) >= self.min_bars:
-                # Determine if this is a high or low swing
-                if current_price > last_swing_price and last_swing_type != 'high':
-                    # New swing high
-                    swings.append({
-                        'timestamp': df.index[i],
-                        'index': i,
-                        'swing_type': 'high',
-                        'price': df['high'].iloc[i],
-                        'magnitude_pct': ((current_price - last_swing_price) / last_swing_price) * 100,
-                        'duration': i - last_swing_idx,
-                        'atr_context': atr.iloc[i] if i < len(atr) else threshold
-                    })
-                    last_swing_type = 'high'
-                    last_swing_price = current_price
-                    last_swing_idx = i
-                    
-                elif current_price < last_swing_price and last_swing_type != 'low':
-                    # New swing low
-                    swings.append({
-                        'timestamp': df.index[i],
-                        'index': i,
-                        'swing_type': 'low',
-                        'price': df['low'].iloc[i],
-                        'magnitude_pct': ((last_swing_price - current_price) / last_swing_price) * 100,
-                        'duration': i - last_swing_idx,
-                        'atr_context': atr.iloc[i] if i < len(atr) else threshold
-                    })
-                    last_swing_type = 'low'
-                    last_swing_price = current_price
-                    last_swing_idx = i
-        
-        return swings
 
 
 # ============================================================================
@@ -254,8 +166,7 @@ class ZigZagSwingExtractor:
 
 class HybridSwingRegistry:
     """
-    Consolidates ZigZag-derived swing points and augments them with rich
-    price action and market microstructure metadata.
+    Consolidates price action-derived swing points and augments them with rich market microstructure metadata.
     
     This is the canonical data layer for regime detection.
     """
@@ -266,11 +177,11 @@ class HybridSwingRegistry:
     
     def build_from_dataframe(self, df: pd.DataFrame, swing_points : List[Dict]) -> None:
         """
-        Build registry by enriching ZigZag swings with price action features.
+        Build registry by enriching price action swings with price action features.
         
         Args:
             df: Full OHLCV dataframe with indicators
-            swing_points : Output from ZigZagSwingExtractor
+            swing_points : Output from _extract_feature_engineered_swings(...)
         """
         self.swings = []
         
@@ -853,11 +764,11 @@ class XGBoostRegimePredictor:
 
 class AdvancedRegimeDetectionSystem:
     """
-    Main entry point for Hybrid ZigZag-Price Action Regime Detection.
+    Main entry point for Price Action Regime Detection.
     
     Integrates:
-    - ZigZag swing extraction
-    - Hybrid Swing Registry construction
+    - Price Action swing extraction
+    - Swing Registry construction
     - GaussianHMM unsupervised classification
     - XGBoost supervised prediction
     - Strategy adaptation framework
@@ -870,7 +781,6 @@ class AdvancedRegimeDetectionSystem:
         n_regimes: int = 6,
         random_state: int = 42
     ):
-        self.zigzag = ZigZagSwingExtractor(atr_multiplier, min_bars)
         self.registry = HybridSwingRegistry()
         self.hmm_classifier = None
         self.xgb_predictor = None
@@ -930,7 +840,7 @@ class AdvancedRegimeDetectionSystem:
     def _extract_feature_engineered_swings(self, df, lookback=2):
         """
         Extract swing points from feature-engineered columns (swing_high, swing_low)
-        and compute the same metadata fields that the ZigZag extractor produced.
+        and compute the same metadata fields that the price action extractor produced.
         This ensures full compatibility with HybridSwingRegistry.build_from_dataframe().
         """
 
@@ -941,9 +851,8 @@ class AdvancedRegimeDetectionSystem:
             if df['swing_high'].sum() > 0 and df['swing_low'].sum() > 0:
                 return self._extract_from_precomputed(df, lookback)
             else:
-                # Fallback: use ZigZag extractor
-                print("  ⚠️ Pre-computed swings missing/empty - using ZigZag fallback")
-                return self.zigzag.extract_swings(df)
+                print("  ⚠️ Pre-computed swings missing/empty")
+                #return self.zigzag.extract_swings(df)
 
         if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
             print("⚠️ swing_high/swing_low not found. Run feature engineering first.")
@@ -1292,10 +1201,10 @@ class AdvancedRegimeDetectionSystem:
         print(f"Date range: {df.index[0]} to {df.index[-1]}")
         
         # After swing extraction
-        print(f"\nSwing Extraction:")
-        print(f"  - Total swings detected: {len(swing_points)}")
-        print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
-        print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
+        #print(f"\nSwing Extraction:")
+        #print(f"  - Total swings detected: {len(swing_points)}")
+        #print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
+        #print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
         
         # After HMM
         print(f"\nHMM Classification:")
@@ -1341,6 +1250,14 @@ class AdvancedRegimeDetectionSystem:
 
         swing_points = self._extract_feature_engineered_swings(df_analysis)
         
+        # Swing extraction diagnostics (moved here from top of method)
+        print(f"\nSwing Extraction:")
+        print(f"  - Total swings detected: {len(swing_points)}")
+
+        if len(swing_points) > 0:
+            print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
+            print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
+                
         if len(swing_points) < 10:
             print(f"  ⚠️  Insufficient swings ({len(swing_points)}) for regime detection")
             df_analysis['historical_regime'] = 'unknown'
@@ -1645,7 +1562,7 @@ class AdvancedRegimeDetectionSystem:
     def get_regime_summary(self) -> str:
         """Generate comprehensive regime detection summary."""
         report = "\n" + "="*80 + "\n"
-        report += "HYBRID ZIGZAG-PRICE ACTION REGIME DETECTION SUMMARY\n"
+        report += "PRICE ACTION REGIME DETECTION SUMMARY\n"
         report += "="*80 + "\n\n"
         
         report += f"Registry Size: {len(self.registry.swings)} swings\n\n"
@@ -1669,6 +1586,7 @@ class AdvancedRegimeDetectionSystem:
         swing_df: pd.DataFrame,
         min_instance_swings: int = 6,
         max_instance_swings: int = 300,
+        max_days_per_instance: float = 30.0,
         vol_jump_pct: float = 0.4,
         slope_sign_change: bool = True,
         require_structure_rotation: bool = True,
@@ -1691,6 +1609,8 @@ class AdvancedRegimeDetectionSystem:
         - 'regime_instance_id'  (str): like "R{regime}_I{n}"
         - 'regime_instance_index' (int): 0-based index within regime type
         """
+        if max_days_per_instance is None or max_days_per_instance <= 0:
+            max_days_per_instance = 30.0
 
         # Calculate adaptive thresholds based on data density
         total_swings = len(df)
@@ -1926,7 +1846,7 @@ class AdvancedRegimeDetectionSystem:
 # ============================================================================
 
 if __name__ == "__main__":
-    print("Hybrid ZigZag-Price Action Regime Detection System")
+    print("Price Action Regime Detection System")
     print("="*80)
     print("\nThis module requires integration with the main trading system.")
     print("Import and use AdvancedRegimeDetectionSystem in your pipeline.")
