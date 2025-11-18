@@ -12,7 +12,7 @@ from .db_connector import DatabaseConnector
 from .ingestion import DataIngestionSystem
 from .features_engineering import FeatureEngineer
 from .strategy.strategy_orchestrator import run_strategy_discovery # New entry function
-from strategy.analysis_advanced_regime import AdvancedRegimeDetectionSystem
+from .strategy.analysis_advanced_regime import AdvancedRegimeDetectionSystem
 
 
 def parse_args():
@@ -31,7 +31,7 @@ def main():
 
     # 1. Initialize Database
     db_connector = DatabaseConnector(db_path='./data/auto_trader_db.sqlite')
-    '''
+    
     # 2. Initialize Core Modules
     ingestion_system = DataIngestionSystem(db_connector=db_connector)
     feature_engineer = FeatureEngineer(db_connector=db_connector)
@@ -45,7 +45,7 @@ def main():
     if args.mode in ['all', 'feature']:
         # B. Feature Engineering: Calculate indicators on raw data
         print("\n--- Starting Feature Engineering Service ---")
-        feature_engineer.calculate_and_save_all_features()'''
+        feature_engineer.calculate_and_save_all_features()
 
     if args.mode in ['all', 'discover']:
         # C. Strategy Discovery: Run the main orchestration logic

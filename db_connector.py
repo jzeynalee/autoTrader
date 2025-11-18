@@ -129,6 +129,111 @@ class DatabaseConnector:
                 last_updated TEXT
             );
         """)
+        # --- 4. regime_instances (Stores regime instance master records) ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_instances (
+                instance_id TEXT PRIMARY KEY,
+                pair TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP NOT NULL,
+                duration_hours REAL,
+                swing_count INTEGER,
+                avg_swing_magnitude_pct REAL,
+                dominant_structure TEXT,
+                price_change_pct REAL,
+                max_drawdown_pct REAL,
+                max_runup_pct REAL,
+                volatility_mean REAL,
+                volatility_std REAL,
+                volatility_trend TEXT,
+                rsi_mean REAL,
+                rsi_std REAL,
+                rsi_trend TEXT,
+                macd_hist_mean REAL,
+                macd_crossovers INTEGER,
+                adx_mean REAL,
+                adx_trend TEXT,
+                volume_mean REAL,
+                volume_trend TEXT,
+                volume_spikes INTEGER,
+                higher_highs INTEGER,
+                higher_lows INTEGER,
+                lower_highs INTEGER,
+                lower_lows INTEGER,
+                structure_breaks_bullish INTEGER,
+                structure_breaks_bearish INTEGER,
+                pullback_count INTEGER,
+                avg_pullback_depth_pct REAL,
+                failed_pullbacks INTEGER,
+                next_1d_return_pct REAL,
+                next_3d_return_pct REAL,
+                next_7d_return_pct REAL,
+                max_favorable_excursion_1d REAL,
+                max_adverse_excursion_1d REAL,
+                consistency_score REAL,
+                predictability_score REAL,
+                bar_count INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+       
+        # --- 5. regime_confirming_indicators ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_confirming_indicators (
+                instance_id TEXT NOT NULL,
+                indicator_name TEXT NOT NULL,
+                mean_value REAL,
+                std_value REAL,
+                min_value REAL,
+                max_value REAL,
+                trend TEXT,
+                confirmation_strength REAL,
+                PRIMARY KEY (instance_id, indicator_name),
+                FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
+            );
+        """)
+        
+        # --- 6. regime_candlestick_patterns ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_candlestick_patterns (
+                instance_id TEXT NOT NULL,
+                pattern_name TEXT NOT NULL,
+                pattern_type TEXT,
+                occurrence_count INTEGER,
+                PRIMARY KEY (instance_id, pattern_name),
+                FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
+            );
+        """)
+        
+        # --- 7. regime_price_action_patterns ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_price_action_patterns (
+                instance_id TEXT NOT NULL,
+                pattern_name TEXT NOT NULL,
+                occurrence_count INTEGER,
+                PRIMARY KEY (instance_id, pattern_name),
+                FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
+            );
+        """)
+        
+        # --- 8. regime_chart_patterns ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_chart_patterns (
+                instance_id TEXT NOT NULL,
+                pattern_name TEXT NOT NULL,
+                PRIMARY KEY (instance_id, pattern_name),
+                FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
+            );
+        """)
+        
+        # Create indexes for performance
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_pair_tf ON regime_instances(pair, timeframe);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_start ON regime_instances(start_time);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_structure ON regime_instances(dominant_structure);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_name ON regime_confirming_indicators(indicator_name);")
+       
         self.conn.commit()
 
     def _get_current_columns(self, table_name: str) -> List[str]:
@@ -282,19 +387,20 @@ class DatabaseConnector:
         cursor.execute("SELECT DISTINCT pair_tf FROM features_data;")
         return [row[0] for row in cursor.fetchall()]
 
-    def load_raw_ohlcv(self, pair_tf: str) -> Optional[pd.DataFrame]:
+    def load_raw_ohlcv(self, pair_tf: str, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
         """Loads raw OHLCV data from features_data for feature calculation."""
         if not self.conn:
             return None
-            
+        
+        limit_clause = f"LIMIT {limit}" if limit else ""
         query = f"""
             SELECT timestamp, open, high, low, close, volume 
             FROM features_data 
             WHERE pair_tf = ?
-            ORDER BY timestamp ASC;
+            ORDER BY timestamp ASC
+            {limit_clause};
         """
         try:
-            # We load the INTEGER timestamp and convert to datetime index later
             df = pd.read_sql_query(query, self.conn, params=(pair_tf,))
             if df.empty:
                 return None
@@ -345,6 +451,24 @@ class DatabaseConnector:
         except Exception as e:
             print(f"❌ Error loading full features for {pair_tf}: {e}")
             return None
+        
+    def count_features(self, pair_tf: str) -> int:
+        """Count rows with calculated features for a pair_tf."""
+        if not self.conn:
+            return 0
+        cursor = self.conn.cursor()
+        query = "SELECT COUNT(*) FROM features_data WHERE pair_tf = ? AND rsi IS NOT NULL;"
+        cursor.execute(query, (pair_tf,))
+        return cursor.fetchone()[0]
+
+    def count_raw_rows(self, pair_tf: str) -> int:
+        """Count total raw OHLCV rows for a pair_tf."""
+        if not self.conn:
+            return 0
+        cursor = self.conn.cursor()
+        query = "SELECT COUNT(*) FROM features_data WHERE pair_tf = ?;"
+        cursor.execute(query, (pair_tf,))
+        return cursor.fetchone()[0]
 
     def update_features(self, df_features: pd.DataFrame, pair_tf: str):
         """
