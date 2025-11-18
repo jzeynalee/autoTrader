@@ -1,7 +1,11 @@
-
 """
-regime_statistical_analysis.py
-Statistical experiments to determine indicator/pattern causality.
+regime_statistical_analysis_sqlite.py
+Statistical experiments to determine indicator/pattern causality - SQLite version.
+
+CHANGES FROM MySQL VERSION:
+- Uses ? instead of %s for parameters
+- Uses GROUP_CONCAT without DISTINCT keyword (SQLite doesn't need it)
+- Compatible with SQLite3 syntax
 """
 
 import pandas as pd
@@ -12,7 +16,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple
-from .regime_data_access import RegimeDataAccess
+from regime_data_access_sqlite import RegimeDataAccess
 
 class RegimeStatisticalAnalyzer:
     """
@@ -20,6 +24,8 @@ class RegimeStatisticalAnalyzer:
     1. Which indicators/patterns CAUSE positive outcomes
     2. Which combinations are most predictive
     3. Optimal thresholds for each indicator
+    
+    SQLite-compatible version.
     """
     
     def __init__(self, regime_dao: RegimeDataAccess):
@@ -203,6 +209,7 @@ class RegimeStatisticalAnalyzer:
         Returns ranked list of indicator combinations with predictive power.
         """
         # Get all instances with indicator data
+        # Note: SQLite GROUP_CONCAT doesn't need DISTINCT, it's automatic
         query = """
         SELECT 
             ri.instance_id,
@@ -210,16 +217,20 @@ class RegimeStatisticalAnalyzer:
             ri.next_3d_return_pct,
             ri.consistency_score,
             ri.dominant_structure,
-            GROUP_CONCAT(DISTINCT rci.indicator_name) as indicators,
-            GROUP_CONCAT(DISTINCT rci.mean_value) as indicator_values
+            GROUP_CONCAT(rci.indicator_name) as indicators,
+            GROUP_CONCAT(rci.mean_value) as indicator_values
         FROM regime_instances ri
         LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
         WHERE ri.next_1d_return_pct IS NOT NULL
         GROUP BY ri.instance_id
-        HAVING COUNT(DISTINCT rci.indicator_name) >= 3
+        HAVING COUNT(rci.indicator_name) >= 3
         """
         
-        df = pd.DataFrame(self.dao.db.execute(query, fetch=True))
+        results = self.dao.db.execute(query, fetch=True)
+        if not results:
+            return []
+        
+        df = pd.DataFrame(results)
         
         # Build feature matrix (one-hot encode indicators)
         all_indicators = set()
@@ -291,12 +302,13 @@ class RegimeStatisticalAnalyzer:
         Analyzes common characteristics and creates entry/exit rules.
         """
         # Get all data for these instances
-        placeholders = ','.join(['%s'] * len(instance_ids))
+        # SQLite uses ? for parameters
+        placeholders = ','.join(['?'] * len(instance_ids))
         query = f"""
         SELECT 
             ri.*,
-            GROUP_CONCAT(DISTINCT rci.indicator_name) as all_indicators,
-            GROUP_CONCAT(DISTINCT rcp.pattern_name) as all_patterns
+            GROUP_CONCAT(rci.indicator_name) as all_indicators,
+            GROUP_CONCAT(rcp.pattern_name) as all_patterns
         FROM regime_instances ri
         LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
         LEFT JOIN regime_candlestick_patterns rcp ON ri.instance_id = rcp.instance_id
@@ -304,10 +316,11 @@ class RegimeStatisticalAnalyzer:
         GROUP BY ri.instance_id
         """
         
-        df = pd.DataFrame(self.dao.db.execute(query, tuple(instance_ids), fetch=True))
-        
-        if len(df) == 0:
+        results = self.dao.db.execute(query, tuple(instance_ids), fetch=True)
+        if not results:
             return {'error': 'No instances found'}
+        
+        df = pd.DataFrame(results)
         
         # Extract common characteristics
         common_indicators = self._find_common_elements(df['all_indicators'])

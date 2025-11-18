@@ -38,6 +38,10 @@ from .analysis_confluence_scoring import ConfluenceScoringSystem
 from .regime_based_discovery_system import RegimeStrategyDiscovery
 from .core import StrategyDiscoverySystem
 from .discovery_modes import DiscoveryModesMixin
+from .regime_data_export_integration import (
+    RegimeDataExportIntegration,
+    add_export_to_strategy_pipeline
+)
 
 # ============================================================================
 # NEW ENTRY FUNCTION: RUN STRATEGY DISCOVERY
@@ -85,6 +89,7 @@ def run_strategy_discovery(db_connector):
     except Exception as e:
         print(f"❌ ERROR: Failed to instantiate Analysis Systems: {e}")
         return
+    
 
     # 3. Load Data from DB (Pivoting from file I/O)
     # Note: We must change the call from system.load_data() to system.load_data_from_db()
@@ -96,6 +101,23 @@ def run_strategy_discovery(db_connector):
     if not system.load_data_from_db(): 
         print("❌ Failed to load data from DB. Aborting.")
         return
+    
+    # === EXPORT CONFIGURATION ===
+    export_config = {
+        'enabled': True,  # Set to False to disable exports
+        'output_dir': './data/exports',  # Where to save CSV files
+        'pairs': ['BTCUSDT'],  # Which pairs to export
+        'timeframes': ['4h'],  # Which timeframes to export
+        'export_after_phase': 2,  # Export after Phase 2 (feature engineering)
+        'run_regime_detection': False  # False = faster (detection already done)
+    }
+    
+    print(f"\n📊 Export Configuration:")
+    print(f"   Enabled: {export_config['enabled']}")
+    print(f"   Output: {export_config['output_dir']}")
+    print(f"   Pairs: {', '.join(export_config['pairs'])}")
+    print(f"   Timeframes: {', '.join(export_config['timeframes'])}")
+    # === END EXPORT CONFIGURATION ===
     
     # Optimize memory usage once at start
     system.optimize_data_loading()
@@ -119,6 +141,42 @@ def run_strategy_discovery(db_connector):
     print(f"✅ Loaded {len(system.all_dataframes)} datasets")
 
     # ============================================================================
+    # OPTIONAL: EXPORT DATA FOR STATISTICAL ANALYSIS
+    # ============================================================================
+    if export_config.get('enabled', False):
+        print("\n" + "="*80)
+        print("EXPORTING DATA FOR STATISTICAL ANALYSIS")
+        print("="*80)
+        
+        try:
+            export_results = add_export_to_strategy_pipeline(system, export_config)
+            
+            if export_results:
+                print(f"\n✅ Exported {len(export_results)} dataset(s)")
+                print(f"   Location: {export_config['output_dir']}")
+                print(f"   Files: 10 CSV files per dataset")
+                
+                # Show what was exported
+                for key, result in export_results.items():
+                    if 'summary' in result:
+                        print(f"\n   {key}:")
+                        print(f"      - Bars: {result['summary']['total_bars']}")
+                        print(f"      - Indicators: {result['summary']['total_indicators']}")
+                        print(f"      - Regime instances: {result['summary'].get('regime_instances', 0)}")
+            else:
+                print("⚠️  No datasets exported (check configuration)")
+                
+        except Exception as e:
+            print(f"⚠️  Export failed: {e}")
+            print("   Continuing with strategy discovery...")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("\n📊 Data export disabled in configuration")
+    # === END EXPORT CALL ===
+    
+
+    # ============================================================================
     # --- NEW PHASE 1.5: REGIME STRATEGY PLAYBOOK DISCOVERY ---
     # ============================================================================
     print("\n" + "="*80)
@@ -126,8 +184,8 @@ def run_strategy_discovery(db_connector):
     print("="*80)
 
     from .regime_instance_engine import RegimeInstanceEngine
-    from .regime_data_access import RegimeDataAccess
-    from .regime_statistical_analysis import RegimeStatisticalAnalyzer
+    from .regime_data_access_sqlite import RegimeDataAccess
+    from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
 
     # Initialize components
     instance_engine = RegimeInstanceEngine(

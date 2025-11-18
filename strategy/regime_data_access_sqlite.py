@@ -1,7 +1,12 @@
-
 """
-regime_data_access.py
-Database access layer for regime instance data.
+regime_data_access_sqlite.py
+Database access layer for regime instance data - SQLite version.
+
+CHANGES FROM MySQL VERSION:
+- Uses ? instead of %s for parameters
+- Uses ON CONFLICT instead of ON DUPLICATE KEY UPDATE
+- Uses CURRENT_TIMESTAMP instead of NOW()
+- Compatible with SQLite3 syntax
 """
 
 import pandas as pd
@@ -14,6 +19,8 @@ class RegimeDataAccess:
     """
     Handles all database operations for regime instances.
     Provides clean interface for storage and retrieval.
+    
+    SQLite-compatible version.
     """
     
     def __init__(self, db_connector):
@@ -79,12 +86,12 @@ class RegimeDataAccess:
             consistency_score, predictability_score,
             bar_count
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?
         )
-        ON DUPLICATE KEY UPDATE
+        ON CONFLICT(instance_id) DO UPDATE SET
             updated_at = CURRENT_TIMESTAMP
         """
         
@@ -119,19 +126,18 @@ class RegimeDataAccess:
             instance_id, indicator_name,
             mean_value, std_value, min_value, max_value, trend,
             confirmation_strength
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            mean_value = VALUES(mean_value),
-            std_value = VALUES(std_value),
-            min_value = VALUES(min_value),
-            max_value = VALUES(max_value),
-            trend = VALUES(trend),
-            confirmation_strength = VALUES(confirmation_strength)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(instance_id, indicator_name) DO UPDATE SET
+            mean_value = excluded.mean_value,
+            std_value = excluded.std_value,
+            min_value = excluded.min_value,
+            max_value = excluded.max_value,
+            trend = excluded.trend,
+            confirmation_strength = excluded.confirmation_strength
         """
         
         for indicator_name, stats in instance.indicator_values.items():
             # Calculate confirmation strength (0-100)
-            # High strength = consistent, extreme values
             strength = self._calculate_confirmation_strength(indicator_name, stats)
             
             values = (
@@ -194,7 +200,9 @@ class RegimeDataAccess:
         query = """
         INSERT INTO regime_candlestick_patterns (
             instance_id, pattern_name, pattern_type, occurrence_count
-        ) VALUES (%s, %s, %s, %s)
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(instance_id, pattern_name) DO UPDATE SET
+            occurrence_count = excluded.occurrence_count
         """
         
         # Bullish patterns
@@ -220,7 +228,9 @@ class RegimeDataAccess:
         query = """
         INSERT INTO regime_price_action_patterns (
             instance_id, pattern_name, occurrence_count
-        ) VALUES (%s, %s, %s)
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(instance_id, pattern_name) DO UPDATE SET
+            occurrence_count = excluded.occurrence_count
         """
         
         # Count occurrences of each pattern
@@ -240,7 +250,8 @@ class RegimeDataAccess:
         query = """
         INSERT INTO regime_chart_patterns (
             instance_id, pattern_name
-        ) VALUES (%s, %s)
+        ) VALUES (?, ?)
+        ON CONFLICT(instance_id, pattern_name) DO NOTHING
         """
         
         for pattern_name in instance.chart_patterns:
@@ -264,19 +275,19 @@ class RegimeDataAccess:
         params = []
         
         if pair:
-            conditions.append("pair = %s")
+            conditions.append("pair = ?")
             params.append(pair)
         
         if timeframe:
-            conditions.append("timeframe = %s")
+            conditions.append("timeframe = ?")
             params.append(timeframe)
         
         if structure:
-            conditions.append("dominant_structure = %s")
+            conditions.append("dominant_structure = ?")
             params.append(structure)
         
         if min_consistency:
-            conditions.append("consistency_score >= %s")
+            conditions.append("consistency_score >= ?")
             params.append(min_consistency)
         
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -285,7 +296,7 @@ class RegimeDataAccess:
         SELECT * FROM regime_instances
         WHERE {where_clause}
         ORDER BY start_time DESC
-        LIMIT %s
+        LIMIT ?
         """
         
         params.append(limit)
@@ -315,8 +326,8 @@ class RegimeDataAccess:
             ri.consistency_score
         FROM regime_confirming_indicators rci
         JOIN regime_instances ri ON rci.instance_id = ri.instance_id
-        WHERE rci.indicator_name = %s
-          AND rci.confirmation_strength >= %s
+        WHERE rci.indicator_name = ?
+          AND rci.confirmation_strength >= ?
         ORDER BY rci.confirmation_strength DESC
         """
         
@@ -350,7 +361,7 @@ class RegimeDataAccess:
                 ri.predictability_score
             FROM regime_candlestick_patterns rcp
             JOIN regime_instances ri ON rcp.instance_id = ri.instance_id
-            WHERE rcp.pattern_name = %s
+            WHERE rcp.pattern_name = ?
             ORDER BY ri.start_time DESC
             """
         else:  # price_action
@@ -366,7 +377,7 @@ class RegimeDataAccess:
                 ri.predictability_score
             FROM regime_price_action_patterns rpap
             JOIN regime_instances ri ON rpap.instance_id = ri.instance_id
-            WHERE rpap.pattern_name = %s
+            WHERE rpap.pattern_name = ?
             ORDER BY ri.start_time DESC
             """
         
