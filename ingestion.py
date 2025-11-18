@@ -21,7 +21,7 @@ WS_BASE_URL = "wss://ws.lbkex.com/ws/V2/"
 WS_MAX_RETRIES = 5
 WS_RECONNECT_DELAY_S = 10
 # Assuming 20 pairs total, mapping to LBANK format
-PAIRS_TO_FETCH = ['btc_usdt']#, 'eth_usdt', 'sol_usdt', 'trx_usdt', 'doge_usdt']
+PAIRS_TO_FETCH = ['btc_usdt', 'eth_usdt', 'sol_usdt', 'trx_usdt', 'doge_usdt']
 TIME_FRAMES = {'1m': 'minute1', '5m': 'minute5', '15m': 'minute15', '1h': 'hour1', '4h': 'hour4'}
 MAX_LIMIT = 2000
 DAYS_HISTORICAL = 365 # Default for initial setup

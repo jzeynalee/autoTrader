@@ -131,7 +131,9 @@ class FeatureEngineerOptimized:
                 print("   Please add `count_features` and `count_raw_rows` to your DBConnector.")
                 print("   Falling back to legacy full calculation for this pair.")
                 feature_count = 0
-                raw_count = len(self.db.load_raw_ohlcv(pair_tf) or [])
+                #raw_count = len(self.db.load_raw_ohlcv(pair_tf) or [])
+                df_raw = self.db.load_raw_ohlcv(pair_tf)
+                raw_count = len(df_raw) if df_raw is not None else 0
 
             if raw_count < 50:
                 print(f"⚠️ Skipping {pair_tf}: Insufficient raw data ({raw_count} rows).")

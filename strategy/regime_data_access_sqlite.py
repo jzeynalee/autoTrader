@@ -10,6 +10,7 @@ CHANGES FROM MySQL VERSION:
 """
 
 import pandas as pd
+import numpy as np
 import json
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -29,6 +30,22 @@ class RegimeDataAccess:
             db_connector: Database connection object with execute() method
         """
         self.db = db_connector
+     
+         # Add timestamp normalization helper
+        def _ensure_sqlite_timestamp(x):
+            """
+            Convert pandas.Timestamp or numpy datetime64 to SQLite-acceptable strings.
+            SQLite only reliably stores ISO strings for timestamps.
+            """
+            if isinstance(x, pd.Timestamp):
+                return x.to_pydatetime().isoformat()
+            if isinstance(x, np.datetime64):
+                return pd.to_datetime(x).to_pydatetime().isoformat()
+            if isinstance(x, datetime):
+                return x.isoformat()
+            return x
+        
+        self._ts = _ensure_sqlite_timestamp
     
     def store_regime_instance(self, instance: RegimeInstance) -> bool:
         """
@@ -96,8 +113,12 @@ class RegimeDataAccess:
         """
         
         values = (
-            instance.instance_id, instance.pair, instance.timeframe,
-            instance.start_time, instance.end_time, instance.duration_hours,
+            instance.instance_id,
+            instance.pair,
+            instance.timeframe,
+            self._ts(instance.start_time),
+            self._ts(instance.end_time),
+            instance.duration_hours,
             instance.swing_count, instance.avg_swing_magnitude_pct, instance.dominant_structure,
             instance.price_change_pct, instance.max_drawdown_pct, instance.max_runup_pct,
             instance.volatility_mean, instance.volatility_std, instance.volatility_trend,
@@ -207,17 +228,32 @@ class RegimeDataAccess:
         
         # Bullish patterns
         for pattern_name, count in instance.bullish_patterns.items():
-            values = (instance.instance_id, pattern_name, 'bullish', count)
+            values = (
+                instance.instance_id,
+                pattern_name,
+                'bullish',
+                count
+            )
             self.db.execute(query, values)
         
         # Bearish patterns
         for pattern_name, count in instance.bearish_patterns.items():
-            values = (instance.instance_id, pattern_name, 'bearish', count)
+            values = (
+                instance.instance_id,
+                pattern_name,
+                'bearish',
+                count
+            )
             self.db.execute(query, values)
         
         # Neutral patterns
         for pattern_name, count in instance.neutral_patterns.items():
-            values = (instance.instance_id, pattern_name, 'neutral', count)
+            values = (
+                instance.instance_id,
+                pattern_name,
+                'neutral',
+                count
+            )
             self.db.execute(query, values)
     
     def _insert_price_action_patterns(self, instance: RegimeInstance):
@@ -239,7 +275,11 @@ class RegimeDataAccess:
             pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
         
         for pattern_name, count in pattern_counts.items():
-            values = (instance.instance_id, pattern_name, count)
+            values = (
+                instance.instance_id,
+                pattern_name,
+                count
+            )
             self.db.execute(query, values)
     
     def _insert_chart_patterns(self, instance: RegimeInstance):
@@ -255,7 +295,10 @@ class RegimeDataAccess:
         """
         
         for pattern_name in instance.chart_patterns:
-            values = (instance.instance_id, pattern_name)
+            values = (
+                instance.instance_id,
+                pattern_name
+            )
             self.db.execute(query, values)
     
     def get_regime_instances(

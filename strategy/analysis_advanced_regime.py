@@ -1612,7 +1612,8 @@ class AdvancedRegimeDetectionSystem:
             max_days_per_instance = 30.0
 
         # Calculate adaptive thresholds based on data density
-        total_swings = len(df)
+        total_swings = len(swing_df)
+        df = swing_df.copy()
         
         # Adaptive min_instance_swings
         if total_swings < 50:
