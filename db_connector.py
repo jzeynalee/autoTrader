@@ -1,4 +1,5 @@
 # db_connector.py
+import os
 import sqlite3
 import pandas as pd
 import json
@@ -11,52 +12,55 @@ class DatabaseConnector:
     Handles I/O for feature data and strategy storage.
     """
     
-    def __init__(self, db_path: str = './data/auto_trader_db.sqlite'):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        # If no path provided, try to load from config, otherwise use default
+        if db_path is None:
+            try:
+                from .config import get_db_path
+                self.db_path = get_db_path()
+            except ImportError:
+                self.db_path = './data/auto_trader_db.sqlite'
+        else:
+            self.db_path = db_path
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)        
         self.conn = None
         self.connect()
         self.create_tables()
 
+    #__________________________________________
+
     def connect(self):
-        """Establishes the SQLite connection."""
+        """Establishes connection with optimizations for concurrency."""
         try:
-            self.conn = sqlite3.connect(self.db_path)
-            self.conn.row_factory = sqlite3.Row  # Allows column access by name
-            print(f"✅ Database connected at {self.db_path}")
+            # check_same_thread=False allows this connection to be used in the specific thread/process it was created in
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+            self.conn.row_factory = sqlite3.Row
+            
+            # Enable Write-Ahead Logging (WAL) for better concurrency
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.execute("PRAGMA synchronous=NORMAL;")
+            
         except sqlite3.Error as e:
             print(f"❌ Database connection failed: {e}")
             self.conn = None
 
     def close(self):
-        """Closes the database connection."""
         if self.conn:
             self.conn.close()
-            print("Database connection closed.")
-            
-    # ========================================================================
-    # GENERIC I/O (The missing method)
-    # ========================================================================
 
     def execute(self, query: str, params: tuple = None, fetch: bool = False):
-        """
-        A generic, multipurpose method to execute any SQL query.
-
-        Args:
-            query (str): The SQL query to execute.
-            params (tuple, optional): Parameters to bind to the query.
-            fetch (bool):
-                - If True: Executes a SELECT query and returns all results (fetchall).
-                - If False: Executes an INSERT/UPDATE/DELETE query and commits.
-
-        Returns:
-            list: A list of rows (if fetch=True).
-            None: (if fetch=False or on error).
-        """
-        if not self.conn:
-            print("❌ Cannot execute: No database connection.")
+        if not self.conn: return None
+        try:
+            cursor = self.conn.cursor()
+            if params: cursor.execute(query, params)
+            else: cursor.execute(query)
+            
+            if fetch: return cursor.fetchall()
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"❌ SQL Error: {e}")
             return None
-        
-        cursor = self.conn.cursor()
         
         try:
             if params:
@@ -225,6 +229,33 @@ class DatabaseConnector:
                 pattern_name TEXT NOT NULL,
                 PRIMARY KEY (instance_id, pattern_name),
                 FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
+            );
+        """)
+
+        # 9. Statistical Experiments
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS statistical_experiments (
+                experiment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_name TEXT,
+                experiment_type TEXT,
+                parameters_json TEXT,
+                results_json TEXT,
+                sample_size INTEGER,
+                run_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        # 10. : Positions Table for Pillar 3 (Risk Manager)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                position_id TEXT PRIMARY KEY,
+                pair TEXT,
+                side TEXT,
+                entry_price REAL,
+                size REAL,
+                stop_loss REAL,
+                take_profit REAL,
+                status TEXT, -- 'OPEN', 'CLOSED'
+                open_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         
