@@ -36,7 +36,7 @@ def main():
     ingestion_system = DataIngestionSystem(db_connector=db_connector)
     feature_engineer = FeatureEngineer(db_connector=db_connector)
 
-    if args.mode in ['all', 'ingest']:
+    '''if args.mode in ['all', 'ingest']:
         # A. Ingestion: Fetch historical and start WebSocket (simulated)
         print("\n--- Starting Data Ingestion Service ---")
         ingestion_system.start_historical_ingestion()
@@ -45,7 +45,7 @@ def main():
     if args.mode in ['all', 'feature']:
         # B. Feature Engineering: Calculate indicators on raw data
         print("\n--- Starting Feature Engineering Service ---")
-        feature_engineer.calculate_and_save_all_features()
+        feature_engineer.calculate_and_save_all_features()'''
 
     if args.mode in ['all', 'discover']:
         # C. Strategy Discovery: Run the main orchestration logic

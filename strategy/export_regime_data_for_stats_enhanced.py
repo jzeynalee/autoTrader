@@ -335,10 +335,36 @@ class EnhancedRegimeDataExporter:
         print("8. See STATISTICAL_TESTING_GUIDE.md for analysis examples")
         print("="*80)
         
+        # Prepare dataframes dictionary
+        dataframes = {
+            'df_raw': df,
+            'df_enriched': df_enriched
+        }
+
+        # Add optional dataframes if they exist
+        if chart_pattern_cols:
+            dataframes['chart_patterns'] = df_enriched[['close'] + chart_pattern_cols].copy()
+            
+        if pullback_cols:
+            dataframes['pullback_states'] = df_enriched[['close', 'high', 'low'] + pullback_cols].copy()
+            
+        if price_action_cols:
+            dataframes['price_action'] = df_enriched[['close'] + price_action_cols].copy()
+            
+        if hmm_cols:
+            dataframes['hmm_states'] = df_enriched[['close'] + hmm_cols].copy()
+            
+        if xgb_cols:
+            dataframes['xgb_predictions'] = df_enriched[['close'] + xgb_cols].copy()
+            
+        if 'regime_instance_id' in df_enriched.columns:
+            dataframes['regime_instances'] = instances_df
+
         return {
             'summary': summary,
             'files': export_files,
-            'timestamp': self.timestamp
+            'timestamp': self.timestamp,
+            'dataframes': dataframes  # ← NEW: Return actual DataFrames
         }
 
 

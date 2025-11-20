@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from numba import jit, njit
 from .chart_patterns import CHART_PATTERN_FUNCS
 
 class FeatureEngineerOptimized:
@@ -353,7 +354,7 @@ class FeatureEngineerOptimized:
         cols['adx'] = self.rma(dx, 14)
         
         # ============ AROON (This loop is still slow) ============
-        def aroon_vectorized(series, period, is_high=True):
+        '''def aroon_vectorized(series, period, is_high=True):
             result = pd.Series(np.nan, index=series.index)
             for i in range(period - 1, len(series)):
                 window = series.iloc[i-period+1:i+1]
@@ -367,7 +368,76 @@ class FeatureEngineerOptimized:
         cols['aroon_down'] = aroon_vectorized(df['low'], 25, is_high=False)
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
-        cols['aroon_osc'] = df['aroon_up'] - df['aroon_down']
+        cols['aroon_osc'] = df['aroon_up'] - df['aroon_down']'''
+
+        @njit(cache=True)
+        def numba_aroon(series_arr: np.ndarray, period: int, is_high: bool) -> np.ndarray:
+            """
+            Calculates the Aroon Up or Aroon Down indicator using Numba.
+            This replaces the slow explicit Python loop and rolling window operations.
+            
+            The Aroon value is calculated based on how many periods have passed
+            since the maximum (Aroon Up) or minimum (Aroon Down) price was observed
+            within the current lookback period.
+            """
+            n = len(series_arr)
+            # Initialize with NaN for the first (period-1) elements as they don't 
+            # have a full window yet.
+            result = np.full(n, np.nan, dtype=np.float64) 
+
+            # Start loop from period - 1 to ensure a full window is available
+            for i in range(period - 1, n):
+                # Define the window: series_arr[i - period + 1] to series_arr[i]
+                start_index = i - period + 1
+                window = series_arr[start_index:i + 1]
+                
+                # Find the index of the extreme value within the window (0 to period-1)
+                if is_high:
+                    extreme_index_in_window = np.argmax(window)
+                else:
+                    extreme_index_in_window = np.argmin(window)
+                    
+                # periods_since calculates how many periods have passed since the extreme.
+                # A value of 0 means the extreme was today (index period-1).
+                # A value of period-1 means the extreme was at the start of the window (index 0).
+                periods_since = (period - 1) - extreme_index_in_window
+                
+                # Aroon value: ((period - periods_since) / period) * 100
+                result[i] = ((period - periods_since) / period) * 100
+                
+            return result
+
+        # --- Main Accelerated Function ---
+        def calculate_aroon_accelerated(df: pd.DataFrame, period: int = 25) -> pd.DataFrame:
+            """
+            Calculates Aroon Up, Aroon Down, and the Aroon Oscillator.
+            """
+            
+            # 1. Prepare data arrays
+            high_arr = df['high'].values
+            low_arr = df['low'].values
+
+            # 2. Calculate Aroon Up (Accelerated)
+            aroon_up_arr = numba_aroon(high_arr, period, True)
+            aroon_up = pd.Series(aroon_up_arr, index=df.index)
+
+            # 3. Calculate Aroon Down (Accelerated)
+            aroon_down_arr = numba_aroon(low_arr, period, False)
+            aroon_down = pd.Series(aroon_down_arr, index=df.index)
+
+            # 4. Calculate Aroon Oscillator (Vectorized)
+            aroon_osc = aroon_up - aroon_down
+            
+            # Return results in a new DataFrame
+            results = pd.DataFrame({
+                f'aroon_up_{period}': aroon_up,
+                f'aroon_down_{period}': aroon_down,
+                f'aroon_osc_{period}': aroon_osc
+            }, index=df.index)
+            
+            return aroon_up, aroon_down, aroon_osc
+
+        cols['aroon_up'], cols['aroon_down'], cols['aroon_osc'] = calculate_aroon_accelerated(df['high'].values, 25, True)
         
         # ============ ICHIMOKU (Vectorized) ============
         period9_high = df['high'].rolling(9).max()
@@ -391,7 +461,7 @@ class FeatureEngineerOptimized:
         cols['ichimoku_lagging'] = df['close'].shift(26)
         
         # ============ PARABOLIC SAR (This loop is still slow) ============
-        def psar_vectorized(high, low, close, af_start=0.02, af_inc=0.02, af_max=0.2):
+        '''def psar_vectorized(high, low, close, af_start=0.02, af_inc=0.02, af_max=0.2):
             psar = close.copy()
             bull = True
             af = af_start
@@ -429,9 +499,138 @@ class FeatureEngineerOptimized:
                         psar.iloc[i] = high.iloc[i-1]
                     if i >= 2 and high.iloc[i-2] > psar.iloc[i]:
                         psar.iloc[i] = high.iloc[i-2]
-            return psar
-        cols['psar'] = psar_vectorized(df['high'], df['low'], df['close'])
+            return psar'''
         
+        @njit(cache=True)
+        def numba_psar(
+            high_arr: np.ndarray, 
+            low_arr: np.ndarray, 
+            close_arr: np.ndarray, 
+            af_start: float = 0.02, 
+            af_inc: float = 0.02, 
+            af_max: float = 0.2
+        ) -> np.ndarray:
+            """
+            Calculates the Parabolic SAR (Stop and Reverse) indicator using Numba.
+            This replaces the slow explicit Python/Pandas loop with a fast, compiled loop.
+            
+            The PSAR calculation is highly iterative and includes:
+            1. Tracking the trend direction (bull/bear).
+            2. Tracking the Extreme Point (EP), the highest high in an uptrend or lowest low in a downtrend.
+            3. Updating the Acceleration Factor (AF) when a new EP is reached.
+            4. Enforcing 'jump' rules (PSAR cannot cross over the previous two days' lows/highs).
+            """
+            n = len(close_arr)
+            if n == 0:
+                return np.array([])
+            
+            psar = np.zeros(n, dtype=np.float64)
+            
+            # Initialize variables
+            # The first PSAR point is often the previous bar's close, but to start the logic 
+            # we initialize the first three points as the close prices (or the EP).
+            psar[0] = close_arr[0]
+            
+            # Initial state assumption (PSAR is trend-following, so we need a prior trend)
+            bull = True  # Assuming initial uptrend
+            af = af_start
+            
+            # EP is the highest high in a bull trend, or the lowest low in a bear trend.
+            # We initialize HP and LP for the first day.
+            hp = high_arr[0]  # Highest Price (in current bull trend)
+            lp = low_arr[0]   # Lowest Price (in current bear trend)
+            
+            # Since PSAR relies on previous day values, we process the loop from i=1
+            for i in range(1, n):
+                psar_prev = psar[i - 1]
+                
+                # --- 1. Calculate the next PSAR value based on the current trend (bull/bear) ---
+                if bull:
+                    # Bullish trend: PSAR moves up towards the high side
+                    psar[i] = psar_prev + af * (hp - psar_prev)
+                    
+                    # Check for reversal to Bearish
+                    if low_arr[i] < psar[i]:
+                        # Reversal: Current low crosses PSAR -> switch to Bear
+                        bull = False
+                        
+                        # New PSAR value after reversal is the previous EP (HP)
+                        psar[i] = hp
+                        
+                        # Reset AF and initialize new LP
+                        af = af_start
+                        lp = low_arr[i]
+                    
+                    # If still bull, update EP and AF
+                    else:
+                        if high_arr[i] > hp:
+                            # New highest high (New EP)
+                            hp = high_arr[i]
+                            # Increase AF, maxing out at af_max
+                            af = min(af + af_inc, af_max)
+                
+                else: # Bear trend
+                    # Bearish trend: PSAR moves down towards the low side
+                    psar[i] = psar_prev + af * (lp - psar_prev)
+                    
+                    # Check for reversal to Bullish
+                    if high_arr[i] > psar[i]:
+                        # Reversal: Current high crosses PSAR -> switch to Bull
+                        bull = True
+                        
+                        # New PSAR value after reversal is the previous EP (LP)
+                        psar[i] = lp
+                        
+                        # Reset AF and initialize new HP
+                        af = af_start
+                        hp = high_arr[i]
+                    
+                    # If still bear, update EP and AF
+                    else:
+                        if low_arr[i] < lp:
+                            # New lowest low (New EP)
+                            lp = low_arr[i]
+                            # Increase AF, maxing out at af_max
+                            af = min(af + af_inc, af_max)
+                            
+                # --- 2. Enforce the 'Jump' Rule (PSAR cannot penetrate recent price extremes) ---
+                # PSAR must not be higher than the low of the two previous bars in a bull trend
+                if bull:
+                    if i >= 1 and low_arr[i-1] < psar[i]:
+                        psar[i] = low_arr[i-1]
+                    if i >= 2 and low_arr[i-2] < psar[i]:
+                        psar[i] = min(psar[i], low_arr[i-2]) # Use min in case i-1 was already used
+                
+                # PSAR must not be lower than the high of the two previous bars in a bear trend
+                else: # Bear trend
+                    if i >= 1 and high_arr[i-1] > psar[i]:
+                        psar[i] = high_arr[i-1]
+                    if i >= 2 and high_arr[i-2] > psar[i]:
+                        psar[i] = max(psar[i], high_arr[i-2]) # Use max in case i-1 was already used
+                        
+            return psar
+
+        # --- Main Function for Demonstration ---
+        def calculate_psar_accelerated(df: pd.DataFrame, af_start=0.02, af_inc=0.02, af_max=0.2) -> pd.Series:
+            """
+            Calculates the Parabolic SAR and returns it as a Pandas Series.
+            """
+            
+            # 1. Prepare data arrays (Numba requires NumPy arrays)
+            high_arr = df['high'].values
+            low_arr = df['low'].values
+            close_arr = df['close'].values
+
+            # 2. Calculate PSAR using Numba
+            psar_arr = numba_psar(high_arr, low_arr, close_arr, af_start, af_inc, af_max)
+
+            # 3. Convert result back to Pandas Series with original index
+            psar_series = pd.Series(psar_arr, index=df.index, name='PSAR')
+            
+            return psar_series
+
+        cols['psar'] = calculate_psar_accelerated(df, 0.02, 0.02, 0.2)
+
         # ============ TRIX ============
         ema1 = self.ema(df['close'], 15)
         ema2 = self.ema(ema1, 15)
@@ -485,7 +684,7 @@ class FeatureEngineerOptimized:
         cols = {}
         
         # ============ CONNORS RSI (This loop is still slow) ============
-        rsi_component = df['rsi'].copy()
+        '''rsi_component = df['rsi'].copy()
         
         streak = pd.Series(0, index=df.index)
         for i in range(1, len(df)):
@@ -507,8 +706,134 @@ class FeatureEngineerOptimized:
             lambda x: pd.Series(x).rank(pct=True).iloc[-1] * 100 if len(x) > 0 else np.nan, 
             raw=False
         )
-        cols['connors_rsi'] = (rsi_component + rsi_streak + pct_rank) / 3
+        cols['connors_rsi'] = (rsi_component + rsi_streak + pct_rank) / 3'''
+
+        @njit(cache=True)
+        def numba_calculate_streak(close_prices: np.ndarray) -> np.ndarray:
+            """
+            Calculates the consecutive up/down streak array using Numba.
+            This replaces the slow explicit Python loop in the original code.
+            """
+            n = len(close_prices)
+            streak = np.zeros(n, dtype=np.float64)
+
+            # Start loop from 1 as streak depends on the previous day's close
+            for i in range(1, n):
+                prev_streak = streak[i - 1]
+                
+                # Up day (Close[i] > Close[i-1])
+                if close_prices[i] > close_prices[i - 1]:
+                    if prev_streak > 0:
+                        # Extend positive streak
+                        streak[i] = prev_streak + 1
+                    else:
+                        # Start new positive streak
+                        streak[i] = 1
+                
+                # Down day (Close[i] < Close[i-1])
+                elif close_prices[i] < close_prices[i - 1]:
+                    if prev_streak < 0:
+                        # Extend negative streak
+                        streak[i] = prev_streak - 1
+                    else:
+                        # Start new negative streak
+                        streak[i] = -1
+                
+                # No change (Close[i] == Close[i-1]), streak remains 0 (default in array)
+
+            return streak
+
+        @njit(cache=True)
+        def numba_rma(data: np.ndarray, period: int) -> np.ndarray:
+            """
+            Calculates the Relative Moving Average (RMA) using Numba (Wilder's Smoothing).
+            This replaces the self.rma call. RMA is similar to EWMA but uses a slightly
+            different smoothing factor (1/period) in the denominator for the initial value.
+            
+            RMA_t = (RMA_{t-1} * (period - 1) + X_t) / period
+            """
+            n = len(data)
+            rma = np.empty(n, dtype=np.float64)
+            alpha = 1.0 / period
+            
+            # Initialize the first (period-1) values to NaN, and start smoothing 
+            # based on the average of the first 'period' values.
+            # We will simply use an iterative approach, starting smoothing from the first value.
+            # A standard RSI implementation often just uses simple average for the initial segment.
+
+            # 1. Simple average for the first 'period' values
+            if n > 0:
+                rma[0] = data[0]
+                
+            # 2. Apply smoothing formula
+            for i in range(1, n):
+                # RMA_t = RMA_{t-1} + alpha * (X_t - RMA_{t-1})
+                rma[i] = rma[i-1] + alpha * (data[i] - rma[i-1])
+                
+            return rma
+
+
+        # --- Main Accelerated Function (Hybrid Pandas/Numba) ---
+
+        def calculate_connors_rsi_accelerated(df: pd.DataFrame, rsi_period: int = 3, rma_period: int = 2, pct_rank_period: int = 100) -> pd.Series:
+            """
+            Calculates the Connors RSI components using Numba for the iterative parts.
+
+            Assumes the input DataFrame 'df' has 'close' and a pre-calculated 'rsi' column.
+            The 'rsi' calculation itself (the original 'rsi_component') is assumed to be
+            calculated externally, as it's typically a standard RSI(3).
+            """
+            
+            # 1. RSI Component (Assumed pre-calculated standard RSI(3))
+            # Note: In a real implementation, you would calculate this RSI(3) as well.
+            # We use the existing 'rsi' column as per the original code.
+            rsi_component = df['rsi'].copy()
+
+            # 2. Streak Calculation (Numba Accelerated)
+            close_arr = df['close'].values
+            streak_arr = numba_calculate_streak(close_arr)
+            streak = pd.Series(streak_arr, index=df.index)
+
+            # 3. Streak RSI Components (Vectorized Pandas/NumPy + Numba RMA)
+            
+            # Calculate delta (vectorized, fast)
+            streak_delta = streak.diff().fillna(0).values # Fill NaN created by diff()
+
+            # Calculate gains and losses (vectorized, fast)
+            streak_gain_arr = np.where(streak_delta > 0, streak_delta, 0)
+            streak_loss_arr = np.where(streak_delta < 0, -streak_delta, 0)
+
+            # Calculate average gain/loss using Numba RMA
+            streak_avg_gain_arr = numba_rma(streak_gain_arr, rma_period)
+            streak_avg_loss_arr = numba_rma(streak_loss_arr, rma_period)
+            
+            # Convert back to Series for vectorized division (fast)
+            streak_avg_gain = pd.Series(streak_avg_gain_arr, index=df.index)
+            streak_avg_loss = pd.Series(streak_avg_loss_arr, index=df.index)
+
+            # Calculate RS and RSI (vectorized, fast)
+            streak_rs = streak_avg_gain / streak_avg_loss
+            rsi_streak = 100 - (100 / (1 + streak_rs))
+            
+            # 4. Rate of Change and Percent Rank Component (Vectorized Pandas)
+            
+            # Calculate ROC (vectorized, fast)
+            roc = df['close'].pct_change(1) * 100
+            
+            # Calculate Percent Rank (This is a complex rolling operation, 
+            # but the Pandas implementation is generally acceptable for this part.)
+            pct_rank = roc.rolling(pct_rank_period, min_periods=1).apply(
+                lambda x: pd.Series(x).rank(pct=True).iloc[-1] * 100 if len(x) > 0 else np.nan, 
+                raw=False
+            )
+            
+            # 5. Final Calculation
+            connors_rsi = (rsi_component + rsi_streak + pct_rank) / 3
+            
+            return connors_rsi
         
+        cols["connors_rsi"] = calculate_connors_rsi_accelerated(df, 3, 2, 100)
+    
         # ============ STOCHASTIC (Vectorized) ============
         low_min = df['low'].rolling(14).min()
         high_max = df['high'].rolling(14).max()
@@ -557,7 +882,7 @@ class FeatureEngineerOptimized:
         cols['ao'] = self.sma(median_price, 5) - self.sma(median_price, 34)
         
         # ============ KAMA (This loop is still slow) ============
-        def kama_vectorized(series, er_period=10, fast=2, slow=30):
+        '''def kama_vectorized(series, er_period=10, fast=2, slow=30):
             sc_fast = 2 / (fast + 1)
             sc_slow = 2 / (slow + 1)
             kama = np.zeros(len(series))
@@ -572,8 +897,38 @@ class FeatureEngineerOptimized:
                 else:
                     kama[i] = kama[i - 1] + sc * (series.iloc[i] - kama[i - 1])
             return pd.Series(kama, index=series.index)
-        cols['kama'] = kama_vectorized(df['close'], 10, 2, 30)
-        
+        cols['kama'] = kama_vectorized(df['close'], 10, 2, 30)'''
+
+        @jit(nopython=True)
+        def kama_numba(prices, er_period=10, fast=2, slow=30):
+            """Numba-optimized KAMA calculation"""
+            n = len(prices)
+            kama = np.zeros(n)
+            kama[:er_period] = prices[0]
+            
+            sc_fast = 2.0 / (fast + 1)
+            sc_slow = 2.0 / (slow + 1)
+            
+            for i in range(er_period, n):
+                change = abs(prices[i] - prices[i - er_period])
+                
+                # Calculate volatility
+                volatility = 0.0
+                for j in range(i - er_period + 1, i + 1):
+                    volatility += abs(prices[j] - prices[j-1])
+                
+                # Efficiency ratio
+                er = change / volatility if volatility != 0 else 0
+                
+                # Smoothing constant
+                sc = (er * (sc_fast - sc_slow) + sc_slow) ** 2
+                
+                # KAMA
+                kama[i] = kama[i-1] + sc * (prices[i] - kama[i-1])
+            
+            return kama
+        cols['kama'] = kama_numba(df['close'], 10, 2, 30)
+
         # ============ PPO ============
         ema_fast = self.ema(df['close'], 12)
         ema_slow = self.ema(df['close'], 26)
