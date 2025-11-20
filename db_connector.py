@@ -6,6 +6,10 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
+# Local Imports
+from .models import Signal, TradeDirection, OrderSide, Trade
+
+
 class DatabaseConnector:
     """
     Centralized connection and persistence layer for the trading system.
@@ -28,7 +32,23 @@ class DatabaseConnector:
         self.connect()
         self.create_tables()
 
-    #__________________________________________
+
+    def save_trade(self, trade: Trade):
+        """Persists a Trade object to the database."""
+        query = """
+        INSERT OR REPLACE INTO positions (
+            position_id, strategy_id, pair, direction,
+            entry_price, size, stop_loss, take_profit, 
+            status, open_time
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        # Map Trade object fields to DB columns
+        params = (
+            trade.trade_id, trade.strategy_id, trade.symbol, trade.direction.value,
+            trade.entry_price, trade.quantity, trade.stop_loss, trade.take_profit,
+            trade.status.value, trade.entry_time
+        )
+        self.execute(query, params)
 
     def connect(self):
         """Establishes connection with optimizations for concurrency."""
