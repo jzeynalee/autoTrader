@@ -1,4 +1,4 @@
-# File: autotrader/strategy/regime_statistical_analysis_sqlite_V2.py
+# File: autotrader/strategy/statistics.py
 # Integrated upgraded statistical analyzer
 """
 regime_statistical_analysis_sqlite_v2.py
