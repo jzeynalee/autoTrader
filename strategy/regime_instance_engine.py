@@ -201,6 +201,7 @@ class RegimeInstanceEngine:
         for i in range(self.min_bars, n):
             triggered = False
             reason = ""
+            vol_change = 0.0 
             
             # Trigger 1: Volatility jump
             if i > 0 and rolling_vol[i-1] > 0:

@@ -44,7 +44,7 @@ from .regime_data_export_integration import (
 )
 from .regime_instance_engine import RegimeInstanceEngine
 from .regime_data_access_sqlite import RegimeDataAccess
-from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
+from .regime_statistical_analysis_sqlite_V2_deprecated import RegimeStatisticalAnalyzer
 
 # ============================================================================
 # NEW ENTRY FUNCTION: RUN STRATEGY DISCOVERY

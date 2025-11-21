@@ -33,7 +33,7 @@ import json
 
 try:
     from .analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
-    from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
+    from .regime_statistical_analysis_sqlite_V2_deprecated import RegimeStatisticalAnalyzer
 except ImportError:
     print("Error: Could not import 'AdvancedRegimeDetectionSystem'.")
     print("Please ensure 'analysis_advanced_regime.py' is in the same Python path.")
