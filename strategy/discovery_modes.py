@@ -11,6 +11,10 @@ import multiprocessing as mp
 from .reporting import ReportsMixin
 from .patterns import PatternsMixin
 
+from ..models import Signal, TradeDirection
+import uuid
+import time
+
 try:
     from .discovery_mapping import (
         map_indicator_state,

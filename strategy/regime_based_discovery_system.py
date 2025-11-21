@@ -33,6 +33,7 @@ import json
 
 try:
     from .analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
+    from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
 except ImportError:
     print("Error: Could not import 'AdvancedRegimeDetectionSystem'.")
     print("Please ensure 'analysis_advanced_regime.py' is in the same Python path.")
@@ -1365,6 +1366,7 @@ class RegimeStrategyDiscovery:
         self.regime_states_map: Dict[int, RegimeState] = regime_system.hmm_classifier.regime_states
         self.indicator_rules = StrategyIndicatorRules()
         self.strategy_repository: Dict[int, Dict] = {}  # Changed key type to int
+        self.stats_analyzer = None # Will be injected if DB available
     
     def discover_strategies(self) -> Dict[str, Dict]:
         """
@@ -1482,6 +1484,21 @@ class RegimeStrategyDiscovery:
                     indicators, patterns = self.indicator_rules.get_ranging_confirmations(aggregated_row)
             else:
                 indicators, patterns = self.indicator_rules.get_ranging_confirmations(aggregated_row)
+
+            # --- STATISTICAL VALIDATION FILTER (NEW) ---
+            # If we have a stats analyzer, verify these indicators actually matter for this regime
+            if self.stats_analyzer:
+                validated_indicators = []
+                for ind in indicators:
+                    # Strip value to get name "RSI > 55 (60.2)" -> "RSI"
+                    ind_name = ind.split(' ')[0] 
+                    # Run Kruskal-Wallis
+                    stat_result = self.stats_analyzer.analyze_numeric_factor(ind_name)
+                    if stat_result.get('significant', False): # Only keep if p < 0.05
+                        validated_indicators.append(ind)
+                
+                if validated_indicators:
+                    indicators = validated_indicators
 
             # Add to repository (sets auto-deduplicate)
             temp_repository[inst_key]['confirming_indicators'].update(indicators)

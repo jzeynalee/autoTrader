@@ -11,11 +11,19 @@ CHANGES FROM MySQL VERSION:
 import pandas as pd
 import numpy as np
 from scipy import stats
+try:
+    import shap
+    import xgboost as xgb
+    from sklearn.feature_selection import mutual_info_classif
+except ImportError:
+    print("⚠️ Advanced stats libs (shap, xgboost, sklearn) missing.")
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple
+
 from .regime_data_access_sqlite import RegimeDataAccess
 
 class RegimeStatisticalAnalyzer:
@@ -32,171 +40,199 @@ class RegimeStatisticalAnalyzer:
         self.dao = regime_dao
         self.experiments = []
     
-    def analyze_indicator_causality(
+    #def analyze_indicator_causality(
+    def analyze_numeric_factor(
         self,
         indicator_name: str,
-        outcome_metric: str = 'next_1d_return_pct',
+        #outcome_metric: str = 'next_1d_return_pct',
+        regime_col: str = 'dominant_structure',
         min_sample_size: int = 30
     ) -> Dict:
         """
-        Determine if an indicator has causal relationship with outcomes.
-        
-        Uses:
-        - Correlation analysis
-        - T-test for mean differences
-        - Logistic regression for predictive power
-        
-        Returns:
-            {
-                'correlation': float,
-                'p_value': float,
-                'mean_when_high': float,
-                'mean_when_low': float,
-                'predictive_power': float,  # 0-100
-                'optimal_threshold': float,
-                'sample_size': int,
-                'recommendation': str
-            }
+        Phase 1 (Screening): Tests if a numeric indicator statistically distinguishes regimes.
+        Uses Kruskal-Wallis (Non-parametric ANOVA) and Mutual Information.
         """
-        # Get indicator data with outcomes
-        df = self.dao.get_indicator_statistics(indicator_name, min_strength=0)
+        # Get raw data: value vs regime
+        query = """
+        SELECT 
+            rci.mean_value as value,
+            ri.dominant_structure as regime
+        FROM regime_confirming_indicators rci
+        JOIN regime_instances ri ON rci.instance_id = ri.instance_id
+        WHERE rci.indicator_name = ?
+        """
+        results = self.dao.db.execute(query, (indicator_name,), fetch=True)
+        df = pd.DataFrame(results)
+        
         
         if len(df) < min_sample_size:
             return {
                 'error': f'Insufficient data: {len(df)} samples (need {min_sample_size})'
             }
         
-        # 1. Correlation analysis
-        correlation = df['mean_value'].corr(df[outcome_metric])
+        # 1. Kruskal-Wallis H Test (Robust to non-normal financial data)
+        groups = [group['value'].values for name, group in df.groupby('regime')]
+
+        if len(groups) < 2:
+            return {'error': 'Not enough unique regimes for comparison'}
+            
+        stat, p_value = stats.kruskal(*groups)
         
-        # 2. Split by indicator value (median split)
-        median_value = df['mean_value'].median()
-        high_group = df[df['mean_value'] > median_value][outcome_metric]
-        low_group = df[df['mean_value'] <= median_value][outcome_metric]
+        # 2. Mutual Information (Captures non-linear dependencies)
+        # Encodes regime labels to integers for MI calculation
+        df['regime_code'] = df['regime'].astype('category').cat.codes
+        mi_score = mutual_info_classif(
+            df[['value']], 
+            df['regime_code'], 
+            discrete_features=False, 
+            random_state=42
+        )[0]
         
-        # 3. T-test for mean difference
-        t_stat, p_value = stats.ttest_ind(high_group, low_group)
-        
-        # 4. Calculate win rates
-        high_win_rate = (high_group > 0).mean() * 100
-        low_win_rate = (low_group > 0).mean() * 100
-        
-        # 5. Find optimal threshold (maximize win rate)
-        thresholds = np.percentile(df['mean_value'], np.arange(10, 91, 5))
-        best_threshold = median_value
-        best_win_rate = 0
-        
-        for threshold in thresholds:
-            above_thresh = df[df['mean_value'] > threshold][outcome_metric]
-            if len(above_thresh) >= 10:  # Minimum sample
-                win_rate = (above_thresh > 0).mean()
-                if win_rate > best_win_rate:
-                    best_win_rate = win_rate
-                    best_threshold = threshold
-        
-        # 6. Predictive power score (0-100)
-        # Based on: correlation strength, p-value, win rate difference
-        predictive_power = 0
-        if abs(correlation) > 0.3:
-            predictive_power += 40
-        elif abs(correlation) > 0.2:
-            predictive_power += 20
-        
-        if p_value < 0.01:
-            predictive_power += 30
-        elif p_value < 0.05:
-            predictive_power += 15
-        
-        win_rate_diff = abs(high_win_rate - low_win_rate)
-        if win_rate_diff > 20:
-            predictive_power += 30
-        elif win_rate_diff > 10:
-            predictive_power += 15
-        
-        # 7. Recommendation
-        if predictive_power >= 70:
-            recommendation = "STRONG SIGNAL - Use in strategy"
-        elif predictive_power >= 50:
-            recommendation = "MODERATE SIGNAL - Combine with others"
-        elif predictive_power >= 30:
-            recommendation = "WEAK SIGNAL - Use as confirmation only"
-        else:
-            recommendation = "NO SIGNAL - Do not use"
+        # 3. Interpretation
+        is_significant = p_value < 0.05
+        strength = "High" if mi_score > 0.1 else "Low"
         
         return {
-            'indicator_name': indicator_name,
-            'correlation': float(correlation),
+            'test': 'Kruskal-Wallis + Mutual Info',
+            'statistic': float(stat),
             'p_value': float(p_value),
-            'mean_when_high': float(high_group.mean()),
-            'mean_when_low': float(low_group.mean()),
-            'win_rate_when_high': float(high_win_rate),
-            'win_rate_when_low': float(low_win_rate),
-            'predictive_power': float(predictive_power),
-            'optimal_threshold': float(best_threshold),
-            'sample_size': len(df),
-            'recommendation': recommendation
+            'mutual_info': float(mi_score),
+            'significant': is_significant,
+            'recommendation': 'KEEP' if is_significant else 'DISCARD',
+            'summary': f"{indicator_name} has {strength} influence (p={p_value:.4f}, MI={mi_score:.3f})"
         }
-    
-    def analyze_pattern_effectiveness(
+
+    def analyze_categorical_factor(
         self,
         pattern_name: str,
-        pattern_type: str = 'candlestick'
+        regime_col: str = 'dominant_structure'
     ) -> Dict:
         """
-        Analyze how effective a pattern is for prediction.
-        
-        Returns statistical significance and effect size.
+        Phase 1 (Screening): Tests if a categorical pattern appears differently across regimes.
+        Uses G-Test (Log-Likelihood) instead of Chi-Square for better handling of rare patterns.
         """
-        df = self.dao.get_pattern_effectiveness(pattern_name, pattern_type)
-        
-        if len(df) < 10:
-            return {'error': f'Insufficient data: {len(df)} occurrences'}
-        
-        # Compare outcomes with vs. without pattern
-        # (Need to query all instances for comparison)
-        all_instances_query = """
+        # Get occurrence data
+        query = """
         SELECT 
-            instance_id,
-            next_1d_return_pct,
-            next_3d_return_pct,
-            next_7d_return_pct
-        FROM regime_instances
-        WHERE next_1d_return_pct IS NOT NULL
+            ri.dominant_structure as regime,
+            CASE WHEN rcp.pattern_name IS NOT NULL THEN 1 ELSE 0 END as present
+        FROM regime_instances ri
+        LEFT JOIN regime_candlestick_patterns rcp 
+            ON ri.instance_id = rcp.instance_id AND rcp.pattern_name = ?
         """
+        results = self.dao.db.execute(query, (pattern_name,), fetch=True)
+        df = pd.DataFrame(results)
         
-        all_df = pd.DataFrame(self.dao.db.execute(all_instances_query, fetch=True))
+        contingency_table = pd.crosstab(df['present'], df['regime'])
         
-        # Instances WITH pattern
-        with_pattern = df['next_1d_return_pct']
+        # G-Test (Log-Likelihood Ratio)
+        # lambda_=0 gives G-test, lambda_=1 gives Chi-square
+        g_stat, p_value, dof, expected = stats.chi2_contingency(contingency_table, lambda_="log-likelihood")
         
-        # Instances WITHOUT pattern
-        pattern_instance_ids = set(df['instance_id'])
-        without_pattern = all_df[~all_df['instance_id'].isin(pattern_instance_ids)]['next_1d_return_pct']
+        # Cramer's V for effect size
+        n = contingency_table.sum().sum()
+        min_dim = min(contingency_table.shape) - 1
+        cramers_v = np.sqrt(g_stat / (n * min_dim)) if min_dim > 0 else 0
+
+
+        return {
+            'test': 'G-Test (Log-Likelihood)',
+            'statistic': float(g_stat),
+            'p_value': float(p_value),
+            'cramers_v': float(cramers_v),
+            'significant': p_value < 0.05,
+            'summary': f"Pattern '{pattern_name}' is {'significantly' if p_value < 0.05 else 'not'} regime-dependent."
+        }
+
+    def perform_shap_analysis(self, target_metric='next_1d_return_pct', top_n=10):
+        """
+        Phase 2 (Explanation): Uses XGBoost + SHAP to find TRUE drivers of profit.
+        Handles non-linearity and interaction effects.
+        """
+        # 1. Prepare Data (One-hot encoded indicators + Outcomes)
+        query = """
+        SELECT 
+            ri.next_1d_return_pct,
+            ri.volatility_mean,
+            ri.rsi_mean,
+            ri.adx_mean,
+            GROUP_CONCAT(rci.indicator_name) as indicators
+        FROM regime_instances ri
+        LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
+        WHERE ri.next_1d_return_pct IS NOT NULL
+        GROUP BY ri.instance_id
+        """
+        df = pd.DataFrame(self.dao.db.execute(query, fetch=True))
+        if len(df) < 50: return {'error': 'Insufficient data for SHAP'}
+
+        # Feature Engineering
+        # Convert indicator list to binary features
+        all_inds = set()
+        for i in df['indicators'].dropna(): all_inds.update(i.split(','))
         
-        # Statistical tests
-        t_stat, p_value = stats.ttest_ind(with_pattern, without_pattern)
+        for ind in list(all_inds)[:50]: # Limit to top 50 to prevent explosion
+            df[ind] = df['indicators'].apply(lambda x: 1 if isinstance(x, str) and ind in x else 0)
+            
+        X = df.drop(columns=['next_1d_return_pct', 'indicators']).fillna(0)
+        y = (df[target_metric] > 0).astype(int) # Binary classification: Profit or Loss
         
-        # Effect size (Cohen's d)
-        pooled_std = np.sqrt((with_pattern.std()**2 + without_pattern.std()**2) / 2)
-        cohens_d = (with_pattern.mean() - without_pattern.mean()) / pooled_std if pooled_std > 0 else 0
+        # 2. Train XGBoost
+        model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+        model.fit(X, y)
         
-        # Win rates
-        win_rate_with = (with_pattern > 0).mean() * 100
-        win_rate_without = (without_pattern > 0).mean() * 100
+        # 3. Calculate SHAP
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X)
+        
+        # 4. Summarize Importance
+        feature_importance = np.abs(shap_values).mean(axis=0)
+        importance_df = pd.DataFrame({
+            'feature': X.columns,
+            'shap_importance': feature_importance
+        }).sort_values('shap_importance', ascending=False).head(top_n)
+
+        return {
+            'test': 'SHAP Feature Importance',
+            'top_drivers': importance_df.to_dict('records')
+        }
+   
+    def verify_robustness(self, feature_col, target_col='next_1d_return_pct', n_permutations=1000):
+        """
+        Phase 3 (Validation): Permutation Test (White's Reality Check).
+        Shuffles the target variable to see if the relationship holds by chance.
+        """
+        query = f"SELECT {feature_col}, {target_col} FROM regime_instances WHERE {target_col} IS NOT NULL"
+        try:
+            df = pd.DataFrame(self.dao.db.execute(query, fetch=True))
+        except:
+            return {'error': f'Column {feature_col} not found in instances'}
+            
+        if len(df) < 50: return {'error': 'Insufficient data'}
+        
+        # Calculate real correlation (Spearman for non-linear rank)
+        real_corr, _ = stats.spearmanr(df[feature_col], df[target_col])
+        
+        # Permutation loop
+        fake_corrs = []
+        y_values = df[target_col].values.copy()
+        
+        for _ in range(n_permutations):
+            np.random.shuffle(y_values)
+            corr, _ = stats.spearmanr(df[feature_col], y_values)
+            fake_corrs.append(corr)
+            
+        # Calculate p-value: portion of fake correlations stronger than real
+        fake_corrs = np.array(fake_corrs)
+        p_value = (np.abs(fake_corrs) >= np.abs(real_corr)).mean()
         
         return {
-            'pattern_name': pattern_name,
-            'pattern_type': pattern_type,
-            'occurrences': len(df),
-            'avg_return_with_pattern': float(with_pattern.mean()),
-            'avg_return_without_pattern': float(without_pattern.mean()),
-            'win_rate_with_pattern': float(win_rate_with),
-            'win_rate_without_pattern': float(win_rate_without),
-            'p_value': float(p_value),
-            'cohens_d': float(cohens_d),
-            'effect_size': 'large' if abs(cohens_d) > 0.8 else 'medium' if abs(cohens_d) > 0.5 else 'small',
-            'statistically_significant': p_value < 0.05
+            'test': 'Permutation Robustness Check',
+            'real_correlation': float(real_corr),
+            'permutation_p_value': float(p_value),
+            'is_robust': p_value < 0.05,
+            'conclusion': "Robust Feature" if p_value < 0.05 else "Likely Noise/Overfitting"
         }
+
     
     def find_optimal_indicator_combinations(
         self,
