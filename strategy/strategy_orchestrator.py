@@ -42,6 +42,9 @@ from .regime_data_export_integration import (
     RegimeDataExportIntegration,
     add_export_to_strategy_pipeline
 )
+from .regime_instance_engine import RegimeInstanceEngine
+from .regime_data_access_sqlite import RegimeDataAccess
+from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
 
 # ============================================================================
 # NEW ENTRY FUNCTION: RUN STRATEGY DISCOVERY
@@ -183,10 +186,6 @@ def run_strategy_discovery(db_connector):
     print("PHASE 1.5: REGIME INSTANCE DISCOVERY & STATISTICAL ANALYSIS")
     print("="*80)
 
-    from .regime_instance_engine import RegimeInstanceEngine
-    from .regime_data_access_sqlite import RegimeDataAccess
-    from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
-
     # Initialize components
     instance_engine = RegimeInstanceEngine(
         min_bars_per_instance=24,
@@ -225,17 +224,23 @@ def run_strategy_discovery(db_connector):
     indicator_analysis = {}
 
     for indicator in top_indicators:
-        try:
-            result = analyzer.analyze_indicator_causality(indicator)
-            if 'error' not in result:
-                indicator_analysis[indicator] = result
-                print(f"  {indicator:20s} | Power: {result['predictive_power']:5.1f} | {result['recommendation']}")
-        except Exception as e:
-            print(f"  ⚠️ Error analyzing {indicator}: {e}")
+            try:
+                result = analyzer.analyze_indicator_causality(indicator)
+                if 'error' not in result:
+                    indicator_analysis[indicator] = result
+                    # UPDATED: V2 keys handling + V1 compatibility keys added in drop-in
+                    power = result.get('predictive_power', 0) # Added in drop-in V2
+                    rec = result.get('recommendation', 'N/A')
+                    mi = result.get('mutual_info', 0)
+                    print(f"  {indicator:20s} | Power: {power:5.1f} | MI: {mi:.3f} | {rec}")
+            except Exception as e:
+                print(f"  ⚠️ Error analyzing {indicator}: {e}")
 
     # Find optimal combinations
     print("\n🎯 Finding Optimal Indicator Combinations...")
-    combinations = analyzer.find_optimal_indicator_combinations(max_indicators=5)
+    # UPDATED: Handle return type (Dict instead of List)
+    combo_result = analyzer.find_optimal_indicator_combinations(max_indicators=5)
+    combinations = combo_result.get('combinations_top', [])
 
     if combinations:
         print(f"\nTop 5 Indicator Combinations:")

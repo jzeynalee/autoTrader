@@ -2,14 +2,6 @@
 regime_statistical_analysis_sqlite.py
 Integrated upgraded statistical analyzer
 
-OPTIMIZED VERSION v2:
-- ✅ Database indexing for 10-100x faster queries
-- ✅ Progress tracking with ETA
-- ✅ Fixed 'indicators' KeyError
-- ✅ Memory-efficient batch processing
-- ✅ Parallel processing framework
-- ✅ Better error handling
-
 Upgraded, drop-in replacement for `regime_statistical_analysis_sqlite.py`.
 
 Features:
@@ -33,7 +25,6 @@ Usage:
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
-import time
 from scipy import stats
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.inspection import permutation_importance
@@ -101,85 +92,11 @@ class RegimeStatisticalAnalyzer:
 
     Methods are defensive about optional libraries. When an optional lib isn't
     installed, the method will return a meaningful message and continue where possible.
-    
-    OPTIMIZED VERSION with:
-    - Database indexing for 10-100x speed improvement
-    - Progress tracking with ETA
-    - Memory-efficient batch processing
-    - Robust error handling
     """
 
     def __init__(self, regime_dao):
         self.dao = regime_dao
-        self._optimize_database()
-        
-    def _optimize_database(self):
-        """Create database indexes for dramatically faster queries (10-100x speedup)"""
-        print("🔧 Optimizing database indexes...")
-        indexes_to_create = [
-            # Core regime instance indexes
-            ("idx_regime_instances_regime", "regime_instances", "dominant_structure"),
-            ("idx_regime_instances_pair_tf", "regime_instances", "pair, timeframe"),
-            ("idx_regime_instances_duration", "regime_instances", "duration_hours"),
-            ("idx_regime_instances_outcomes", "regime_instances", "next_1d_return_pct, next_3d_return_pct"),
-            
-            # Indicator indexes
-            ("idx_confirming_indicators_name", "regime_confirming_indicators", "indicator_name"),
-            ("idx_confirming_indicators_instance", "regime_confirming_indicators", "instance_id"),
-            ("idx_confirming_indicators_combo", "regime_confirming_indicators", "instance_id, indicator_name"),
-            
-            # Pattern indexes
-            ("idx_candlestick_patterns_instance", "regime_candlestick_patterns", "instance_id"),
-            ("idx_candlestick_patterns_name", "regime_candlestick_patterns", "pattern_name"),
-            
-            # Chart pattern indexes
-            ("idx_chart_patterns_instance", "regime_chart_patterns", "instance_id"),
-            
-            # Price action indexes
-            ("idx_price_action_instance", "regime_price_action_patterns", "instance_id"),
-        ]
-        
-        created = 0
-        for idx_name, table_name, columns in indexes_to_create:
-            try:
-                query = f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name}({columns})"
-                self.dao.db.execute(query)
-                created += 1
-            except Exception as e:
-                print(f"⚠️  Could not create index {idx_name}: {e}")
-        
-        # Commit if connection supports it
-        try:
-            if hasattr(self.dao.db, 'conn'):
-                self.dao.db.conn.commit()
-            print(f"✅ Created {created}/{len(indexes_to_create)} database indexes")
-        except Exception as e:
-            print(f"⚠️  Index commit warning: {e}")
-    
-    def _progress_tracker(self, current: int, total: int, start_time: float, description: str = ""):
-        """Display progress with time estimates"""
-        if total == 0:
-            return
-            
-        progress_pct = (current / total) * 100
-        elapsed = time.time() - start_time
-        
-        if current > 0:
-            avg_time = elapsed / current
-            remaining = (total - current) * avg_time
-            eta_str = f"ETA: {remaining:.0f}s"
-        else:
-            eta_str = "calculating..."
-        
-        # Print every 10% or every 10 items (whichever is more frequent)
-        if current % max(1, total // 10) == 0 or current == total:
-            print(f"   [{current}/{total}] {progress_pct:.1f}% | {elapsed:.1f}s elapsed | {eta_str} | {description}")
-    
-    def _batch_generator(self, items: List, batch_size: int = 100):
-        """Generate batches for memory-efficient processing"""
-        for i in range(0, len(items), batch_size):
-            yield items[i:i + batch_size]
-            
+
     # ----------------------------- Basic helpers -----------------------------
     def _holm_bonferroni(self, pvals: List[float], alpha: float = 0.05) -> List[bool]:
         """Holm-Bonferroni multiple-testing correction. Returns list of booleans: reject/null."""
@@ -209,17 +126,8 @@ class RegimeStatisticalAnalyzer:
         - Logistic regression (L1) to estimate independent effect
         - Granger causality (if time-series data available and statsmodels installed)
         - Returns structured dict with many diagnostics
-        
-        OPTIMIZED: Added error handling and timing
         """
-        start_time = time.time()
-        
-        # Get data with error handling
-        try:
-            df = self.dao.get_indicator_statistics(indicator_name, min_strength=0)
-        except Exception as e:
-            return {'error': f'Database query failed: {str(e)}'}
-            
+        df = self.dao.get_indicator_statistics(indicator_name, min_strength=0)
         if df is None or len(df) < min_sample_size:
             return {'error': f'Insufficient data: {0 if df is None else len(df)} rows'}
 
@@ -316,7 +224,6 @@ class RegimeStatisticalAnalyzer:
         except Exception as e:
             results['granger_error'] = str(e)
 
-        results['analysis_time_seconds'] = time.time() - start_time
         return results
 
     # ------------------------- Pattern effectiveness -------------------------
@@ -400,91 +307,37 @@ class RegimeStatisticalAnalyzer:
         - Optional SHAP (if installed)
         - Penalized logistic regression (L1) for sparse combinations
         Returns ranked combos with robust importance estimates.
-        
-        OPTIMIZED: Fixed 'indicators' KeyError, added progress tracking
         """
-        print(f"\n🎯 Finding optimal indicator combinations...")
-        start_time = time.time()
-        
-        # Query with explicit error handling and comma separator
-        try:
-            query = """
-            SELECT ri.instance_id, ri.next_1d_return_pct, GROUP_CONCAT(rci.indicator_name, ',') as indicators
-            FROM regime_instances ri
-            LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
-            WHERE ri.next_1d_return_pct IS NOT NULL
-            GROUP BY ri.instance_id
-            HAVING COUNT(rci.indicator_name) >= 1
-            """
-            rows = self.dao.db.execute(query, fetch=True)
-        except Exception as e:
-            print(f"❌ Database query failed: {e}")
-            return []
-            
+        query = """
+        SELECT ri.instance_id, ri.next_1d_return_pct, GROUP_CONCAT(rci.indicator_name) as indicators
+        FROM regime_instances ri
+        LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
+        WHERE ri.next_1d_return_pct IS NOT NULL
+        GROUP BY ri.instance_id
+        HAVING COUNT(rci.indicator_name) >= 1
+        """
+        rows = self.dao.db.execute(query, fetch=True)
         if not rows:
-            print("⚠️  No regime instances found with indicators")
             return []
-            
-        print(f"✅ Found {len(rows)} regime instances")
         df = pd.DataFrame(rows)
-        
-        # CRITICAL FIX: Check if 'indicators' column exists
-        if 'indicators' not in df.columns:
-            print(f"❌ Error: 'indicators' column not in results")
-            print(f"   Available columns: {df.columns.tolist()}")
-            return []
-        
-        # CRITICAL FIX: Filter out rows with NULL or empty indicators
-        df['indicators'] = df['indicators'].fillna('')
-        df = df[df['indicators'] != '']
-        
-        if len(df) == 0:
-            print("⚠️  No instances have indicator data")
-            return []
-            
-        print(f"📊 Processing {len(df)} instances with indicator data...")
 
-        # Parse indicators - more robust
-        print("🔨 Building feature matrix...")
-        all_inds = set()
-        for indicators_str in df['indicators']:
-            if indicators_str and str(indicators_str).strip():
-                parts = str(indicators_str).split(',')
-                all_inds.update([p.strip() for p in parts if p.strip()])
-        
-        if not all_inds:
-            print("⚠️  No indicators extracted from data")
-            return []
-            
-        print(f"📈 Found {len(all_inds)} unique indicators")
-        
-        # Create binary indicator features with progress tracking
-        for idx, ind in enumerate(all_inds, 1):
-            df[f'has_{ind}'] = df['indicators'].apply(
-                lambda x: 1 if (x and ind in str(x).split(',')) else 0
-            )
-            self._progress_tracker(idx, len(all_inds), start_time, f"processing {ind}")
+        # parse indicators
+        df['indicators'] = df['indicators'].fillna('')
+        all_inds = set(itertools.chain.from_iterable([s.split(',') for s in df['indicators'] if s]))
+        for ind in all_inds:
+            df[f'has_{ind}'] = df['indicators'].str.contains(ind).astype(int)
 
         feature_cols = [c for c in df.columns if c.startswith('has_')]
-        
-        if not feature_cols:
-            print("⚠️  No feature columns created")
-            return []
-            
         X = df[feature_cols].values
         y = (df[target_metric] > 0).astype(int).values
 
         if X.shape[0] < 30 or len(feature_cols) == 0:
-            print("⚠️  Insufficient samples for training")
             return []
 
-        print(f"🤖 Training Random Forest on {len(X)} samples...")
-        rf = RandomForestClassifier(n_estimators=200, random_state=0, max_depth=6, n_jobs=-1)
+        rf = RandomForestClassifier(n_estimators=200, random_state=0, max_depth=6)
         rf.fit(X, y)
-        print("✅ Model trained successfully")
 
         # Permutation importance (robust)
-        print("📊 Calculating permutation importance...")
         try:
             perm = permutation_importance(rf, X, y, n_repeats=20, random_state=0)
             imp_df = pd.DataFrame({'indicator': [c.replace('has_', '') for c in feature_cols],
@@ -496,14 +349,10 @@ class RegimeStatisticalAnalyzer:
             imp_df.sort_values('perm_importance_mean', ascending=False, inplace=True)
 
         top_inds = imp_df.head(max_indicators)['indicator'].tolist()
-        print(f"🏆 Top {len(top_inds)} indicators: {', '.join(top_inds[:5])}...")
 
-        print(f"🔍 Testing indicator combinations...")
         combos = []
-        combo_count = 0
         for r in range(2, min(len(top_inds), max_indicators) + 1):
             for combo in itertools.combinations(top_inds, r):
-                combo_count += 1
                 mask = np.ones(len(df), dtype=bool)
                 for ind in combo:
                     mask &= df[f'has_{ind}'] == 1
@@ -519,7 +368,6 @@ class RegimeStatisticalAnalyzer:
         extra = {}
         if SHAP_AVAILABLE and len(top_inds) > 0:
             try:
-                print("🔬 Computing SHAP values...")
                 explainer = shap.TreeExplainer(rf)
                 shap_values = explainer.shap_values(X)
                 # for binary y shap_values is list-like; compute mean abs for class 1
@@ -533,10 +381,6 @@ class RegimeStatisticalAnalyzer:
             except Exception as e:
                 extra['shap_error'] = str(e)
 
-        elapsed = time.time() - start_time
-        print(f"✅ Tested {combo_count} combinations in {elapsed:.1f}s")
-        print(f"📊 Found {len(combos)} valid combinations (min {min_sample_for_combo} samples)")
-        
         out = {'combinations_top': combos[:50], 'importance_table': imp_df.to_dict('records')}
         out.update(extra)
         return out
@@ -760,75 +604,3 @@ class RegimeStatisticalAnalyzer:
         common.sort(key=lambda x: counter[x], reverse=True)
 
         return common
-    
-    # ---------------------- Run Full Analysis Suite --------------------------
-    def run_full_analysis(self) -> Dict:
-        """
-        Run complete statistical analysis suite with progress tracking.
-        
-        OPTIMIZED VERSION with progress tracking and better error handling.
-        """
-        print("\n" + "="*80)
-        print("STATISTICAL ANALYSIS SUITE")
-        print("="*80)
-        overall_start = time.time()
-        
-        results = {
-            'timestamp': pd.Timestamp.now(),
-            'analyses': {}
-        }
-        
-        # Get list of indicators
-        print("\n📊 Discovering indicators...")
-        try:
-            indicators_query = "SELECT DISTINCT indicator_name FROM regime_confirming_indicators ORDER BY indicator_name"
-            indicators = self.dao.db.execute(indicators_query, fetch=True)
-            
-            if not indicators:
-                print("⚠️  No indicators found in database")
-                return results
-            
-            indicator_names = [row[0] for row in indicators]
-            print(f"✅ Found {len(indicator_names)} indicators to analyze")
-            
-        except Exception as e:
-            print(f"❌ Failed to get indicators: {e}")
-            return results
-        
-        # Analyze indicators sequentially with progress tracking
-        print(f"\n🔬 Analyzing {len(indicator_names)} indicators...")
-        analysis_start = time.time()
-        
-        for idx, indicator_name in enumerate(indicator_names, 1):
-            print(f"\n[{idx}/{len(indicator_names)}] Analyzing {indicator_name}...")
-            try:
-                analysis = self.analyze_indicator_causality(indicator_name)
-                results['analyses'][indicator_name] = analysis
-            except Exception as e:
-                print(f"   ❌ Failed: {e}")
-                results['analyses'][indicator_name] = {'error': str(e)}
-            
-            self._progress_tracker(idx, len(indicator_names), analysis_start, indicator_name)
-        
-        analysis_time = time.time() - analysis_start
-        print(f"\n✅ Indicator analysis complete ({analysis_time:.1f}s)")
-        
-        # Find optimal combinations
-        print("\n🎯 Finding optimal indicator combinations...")
-        combo_start = time.time()
-        try:
-            results['optimal_combinations'] = self.find_optimal_indicator_combinations()
-        except Exception as e:
-            print(f"❌ Combination analysis failed: {e}")
-            results['optimal_combinations'] = []
-        combo_time = time.time() - combo_start
-        print(f"✅ Combination analysis complete ({combo_time:.1f}s)")
-        
-        overall_time = time.time() - overall_start
-        print(f"\n" + "="*80)
-        print(f"✅ FULL ANALYSIS COMPLETE IN {overall_time:.1f}s")
-        print("="*80)
-        print(f"   Indicators analyzed: {len(results['analyses'])}")
-        print(f"   Combinations found: {len(results.get('optimal_combinations', {}).get('combinations_top', []))}")
-        
-        return results
