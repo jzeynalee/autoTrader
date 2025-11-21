@@ -481,3 +481,128 @@ class RegimeStatisticalAnalyzer:
 
         loading_table = [{ 'feature': feature_columns[i], 'loading_vector': loadings[i].tolist() } for i in range(len(feature_columns))]
         return {'explained_variance_ratio': explained, 'loadings': loading_table, 'silhouette': sil}
+
+    # ---------------------- Strategy generation (ported from V1) ----------------
+    def generate_strategy_from_instances(
+        self,
+        instance_ids: List[str],
+        strategy_name: str
+    ) -> Dict:
+        """
+        Generate a concrete trading strategy from a group of similar instances.
+
+        Ported from V1 for backward compatibility with the strategy-generation pipeline.
+        Returns the same dictionary structure as the original V1 implementation.
+        """
+        if not instance_ids:
+            return {'error': 'No instance ids provided'}
+
+        # SQLite uses ? for parameters
+        placeholders = ','.join(['?'] * len(instance_ids))
+        query = f"""
+        SELECT 
+            ri.*,
+            GROUP_CONCAT(rci.indicator_name) as all_indicators,
+            GROUP_CONCAT(rcp.pattern_name) as all_patterns
+        FROM regime_instances ri
+        LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
+        LEFT JOIN regime_candlestick_patterns rcp ON ri.instance_id = rcp.instance_id
+        WHERE ri.instance_id IN ({placeholders})
+        GROUP BY ri.instance_id
+        """
+
+        results = self.dao.db.execute(query, tuple(instance_ids), fetch=True)
+        if not results:
+            return {'error': 'No instances found'}
+
+        df = pd.DataFrame(results)
+
+        # Extract common characteristics
+        common_indicators = self._find_common_elements(df.get('all_indicators', pd.Series(dtype=object)))
+        common_patterns = self._find_common_elements(df.get('all_patterns', pd.Series(dtype=object)))
+
+        # Calculate average metrics defensively (use .get to avoid KeyError)
+        avg_rsi = float(df['rsi_mean'].mean()) if 'rsi_mean' in df.columns else 50.0
+        avg_adx = float(df['adx_mean'].mean()) if 'adx_mean' in df.columns else 20.0
+        avg_volatility = float(df['volatility_mean'].mean()) if 'volatility_mean' in df.columns else 1.0
+
+        # Determine entry conditions
+        entry_conditions: List[str] = []
+
+        if avg_rsi > 55:
+            entry_conditions.append(f"RSI > {avg_rsi - 5:.1f}")
+        elif avg_rsi < 45:
+            entry_conditions.append(f"RSI < {avg_rsi + 5:.1f}")
+
+        if avg_adx > 25:
+            entry_conditions.append(f"ADX > {avg_adx - 5:.1f}")
+
+        for indicator in common_indicators[:3]:  # Top 3
+            entry_conditions.append(f"{indicator} confirming")
+
+        for pattern in common_patterns[:2]:  # Top 2
+            entry_conditions.append(f"{pattern} present")
+
+        # Determine risk management
+        avg_drawdown = abs(df['max_drawdown_pct'].mean()) if 'max_drawdown_pct' in df.columns else 1.0
+        avg_runup = abs(df['max_runup_pct'].mean()) if 'max_runup_pct' in df.columns else 1.0
+
+        stop_loss = avg_drawdown * 1.2  # 20% buffer
+        take_profit = avg_runup * 0.8   # Conservative target
+
+        # Calculate historical performance
+        win_rate = float((df['next_1d_return_pct'] > 0).mean() * 100) if 'next_1d_return_pct' in df.columns else 0.0
+        avg_return = float(df['next_1d_return_pct'].mean()) if 'next_1d_return_pct' in df.columns else 0.0
+
+        strategy = {
+            'strategy_name': strategy_name,
+            'based_on_instances': len(df),
+            'entry_conditions': entry_conditions,
+            'stop_loss_pct': float(stop_loss),
+            'take_profit_pct': float(take_profit),
+            'position_sizing': 'normal' if avg_volatility < 2.0 else 'reduced',
+            'historical_win_rate': float(win_rate),
+            'historical_avg_return': float(avg_return),
+            'common_indicators': common_indicators,
+            'common_patterns': common_patterns,
+            'status': 'candidate'
+        }
+
+        return strategy
+
+    def _find_common_elements(self, series: pd.Series, min_frequency: float = 0.5) -> List[str]:
+        """Find elements that appear in at least min_frequency of rows.
+
+        Ported from V1. Accepts a pandas Series where each row is a comma-separated string
+        of elements (or NaN). Returns list of elements meeting frequency threshold.
+        """
+        all_elements: List[str] = []
+
+        # If the provided value is not a Series, try to coerce
+        if not isinstance(series, pd.Series):
+            try:
+                series = pd.Series(series)
+            except Exception:
+                return []
+
+        for row in series:
+            if pd.notna(row) and row != '':
+                # ensure string and split
+                elements = str(row).split(',')
+                all_elements.extend([e.strip() for e in elements if e.strip()])
+
+        if not all_elements:
+            return []
+
+        from collections import Counter
+        counter = Counter(all_elements)
+
+        total = len(series)
+        threshold = total * min_frequency
+
+        common = [elem for elem, count in counter.items() if count >= threshold]
+
+        # Sort by frequency
+        common.sort(key=lambda x: counter[x], reverse=True)
+
+        return common
