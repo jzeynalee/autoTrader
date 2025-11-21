@@ -30,6 +30,7 @@ tensorflow>=2.15.0; sys_platform != "win32" or platform_machine != "arm64"
 torch>=2.2.0; extra == "ml"
 hmmlearn;
 xgboost;
+shap;
 
 # Visualization / reporting (optional for richer backtest reports)
 matplotlib>=3.8.0
