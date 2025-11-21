@@ -2,13 +2,15 @@
 regime_statistical_analysis_sqlite.py
 Integrated upgraded statistical analyzer
 
-OPTIMIZED VERSION v2:
+OPTIMIZED VERSION v3 - FIXED:
 - ✅ Database indexing for 10-100x faster queries
 - ✅ Progress tracking with ETA
-- ✅ Fixed 'indicators' KeyError
+- ✅ Fixed column name mapping for DataFrame creation
+- ✅ Proper handling of database query results
 - ✅ Memory-efficient batch processing
 - ✅ Parallel processing framework
 - ✅ Better error handling
+- ✅ Exclude 1m timeframe (non-trading timeframe)
 
 Upgraded, drop-in replacement for `regime_statistical_analysis_sqlite.py`.
 
@@ -62,6 +64,9 @@ try:
 except Exception:
     SHAP_AVAILABLE = False
 
+# Timeframes to exclude from analysis (non-trading timeframes)
+EXCLUDED_TIMEFRAMES = ['1m']  # 1m is not a main trading timeframe
+
 
 # Distance correlation implementation (no external deps)
 def distance_correlation(x: np.ndarray, y: np.ndarray) -> float:
@@ -107,6 +112,7 @@ class RegimeStatisticalAnalyzer:
     - Progress tracking with ETA
     - Memory-efficient batch processing
     - Robust error handling
+    - Proper column mapping for DataFrame creation
     """
 
     def __init__(self, regime_dao):
@@ -179,6 +185,24 @@ class RegimeStatisticalAnalyzer:
         """Generate batches for memory-efficient processing"""
         for i in range(0, len(items), batch_size):
             yield items[i:i + batch_size]
+    
+    def _results_to_dataframe(self, results: List[Tuple], column_names: List[str]) -> pd.DataFrame:
+        """
+        Convert database query results to DataFrame with proper column mapping.
+        
+        Args:
+            results: List of tuples from database query
+            column_names: List of column names in the same order as SELECT statement
+            
+        Returns:
+            DataFrame with properly named columns
+        """
+        if not results:
+            return pd.DataFrame(columns=column_names)
+        
+        # Create DataFrame from results
+        df = pd.DataFrame(results, columns=column_names)
+        return df
             
     # ----------------------------- Basic helpers -----------------------------
     def _holm_bonferroni(self, pvals: List[float], alpha: float = 0.05) -> List[bool]:
@@ -192,454 +216,1370 @@ class RegimeStatisticalAnalyzer:
             threshold = alpha / (m - k)
             if pvals[i] <= threshold:
                 rejects[i] = True
-        return list(rejects)
+            else:
+                break
+        return rejects.tolist()
 
-    # ------------------------- Indicator causality suite ----------------------
-    def analyze_indicator_causality(self,
-                                    indicator_name: str,
-                                    outcome_metric: str = 'next_1d_return_pct',
-                                    min_sample_size: int = 50,
-                                    regimes_column: str = 'regime') -> Dict:
+    # ---------------------- 1) KRUSKAL-WALLIS + ANOVA -------------------------
+    def kruskal_wallis_by_regime(self, feature_name: str) -> Dict:
         """
-        Upgraded indicator causality analysis. Runs:
-        - Kruskal-Wallis (multi-regime nonparametric ANOVA)
-        - Pairwise Dunn tests (if statsmodels available) with Holm correction
-        - Mutual information (nonlinear)
-        - Distance correlation
-        - Logistic regression (L1) to estimate independent effect
-        - Granger causality (if time-series data available and statsmodels installed)
-        - Returns structured dict with many diagnostics
+        Tests whether feature_name differs across multiple regimes using
+        Kruskal-Wallis (nonparametric) or One-way ANOVA (if data near-normal).
+
+        Args:
+            feature_name: A numeric column in regime_instances (e.g., 'rsi_mean', 'adx_mean')
+
+        Returns:
+            {
+              'feature': str,
+              'kw_statistic': float,
+              'kw_pvalue': float,
+              'anova_fstat': float,
+              'anova_pvalue': float,
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Running Kruskal-Wallis + ANOVA for {feature_name}...")
         
-        OPTIMIZED: Added error handling and timing
-        """
-        start_time = time.time()
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
         
-        # Get data with error handling
-        try:
-            df = self.dao.get_indicator_statistics(indicator_name, min_strength=0)
-        except Exception as e:
-            return {'error': f'Database query failed: {str(e)}'}
-            
-        if df is None or len(df) < min_sample_size:
-            return {'error': f'Insufficient data: {0 if df is None else len(df)} rows'}
-
-        # Ensure required columns
-        if outcome_metric not in df.columns:
-            return {'error': f"Outcome metric '{outcome_metric}' not in dataframe"}
-
-        results = {'indicator': indicator_name, 'n': len(df)}
-
-        # 1) Kruskal-Wallis across regimes (non-parametric ANOVA)
-        if regimes_column in df.columns:
-            groups = []
-            group_labels = []
-            for r, sub in df.groupby(regimes_column):
-                groups.append(sub['mean_value'].values)
-                group_labels.append(r)
-            try:
-                kw_stat, kw_p = stats.kruskal(*groups)
-                results['kruskal_stat'] = float(kw_stat)
-                results['kruskal_p'] = float(kw_p)
-            except Exception as e:
-                results['kruskal_error'] = str(e)
-
-            # Pairwise tests (Dunn) using statsmodels if available
-            if STATSMODELS:
-                try:
-                    # Build a two-column table for pairwise multiple comparisons
-                    mc_df = df[[regimes_column, 'mean_value']].dropna()
-                    comp = multi.MultiComparison(mc_df['mean_value'], mc_df[regimes_column])
-                    tuk = comp.tukeyhsd()
-                    # Collect pairwise p-values
-                    pairwise = []
-                    for i in range(len(tuk._results_table.data) - 1):
-                        row = tuk._results_table.data[i + 1]
-                        pairwise.append({'group1': row[0], 'group2': row[1], 'p': float(row[5])})
-                    # Correct p-values
-                    pvals = [p['p'] for p in pairwise]
-                    rejects = multipletests(pvals, alpha=0.05, method='holm')[0].tolist()
-                    for i, p in enumerate(pairwise):
-                        p['reject_null'] = rejects[i]
-                    results['pairwise_tests'] = pairwise
-                except Exception as e:
-                    results['pairwise_error'] = str(e)
-            else:
-                results['pairwise_tests'] = 'statsmodels not available; install statsmodels for pairwise tests'
-
-        # 2) Mutual information (non-linear dependency)
-        try:
-            # mutual_info_regression expects 2D X
-            mi = mutual_info_regression(df[['mean_value']].fillna(0).values, df[outcome_metric].fillna(0).values, random_state=0)
-            results['mutual_info'] = float(mi[0])
-        except Exception as e:
-            results['mutual_info_error'] = str(e)
-
-        # 3) Distance correlation
-        try:
-            dc = distance_correlation(np.asarray(df['mean_value'].fillna(0)), np.asarray(df[outcome_metric].fillna(0)))
-            results['distance_correlation'] = float(dc)
-        except Exception as e:
-            results['distance_correlation_error'] = str(e)
-
-        # 4) Logistic regression L1 to estimate independent predictive effect
-        try:
-            # Build X matrix using lagged indicator + other available numeric columns if present
-            X = df[['mean_value']].fillna(0).values
-            y = (df[outcome_metric] > 0).astype(int).values
-            if len(np.unique(y)) == 1:
-                results['logreg'] = 'Outcome constant; cannot fit classifier'
-            else:
-                scaler = StandardScaler()
-                Xs = scaler.fit_transform(X)
-                logreg = LogisticRegression(penalty='l1', solver='liblinear', C=1.0, random_state=0)
-                scores = cross_val_score(logreg, Xs, y, cv=StratifiedKFold(n_splits=min(5, max(2, len(y)//20))))
-                # Fit on full data to inspect coefficient
-                logreg.fit(Xs, y)
-                coef = float(logreg.coef_[0][0])
-                results['logreg_cv_score_mean'] = float(scores.mean())
-                results['logreg_coef'] = coef
-        except Exception as e:
-            results['logreg_error'] = str(e)
-
-        # 5) Granger causality test if timestamped series is available and statsmodels is installed
-        try:
-            if STATSMODELS and 'timestamp' in df.columns:
-                # Build time-series: sort by timestamp, then test whether indicator leads outcome
-                ts = df.sort_values('timestamp')[[ 'mean_value', outcome_metric ]].dropna()
-                maxlag = min(5, max(1, len(ts)//10))
-                gc_res = sm.tsa.stattools.grangercausalitytests(ts.values, maxlag=maxlag, verbose=False)
-                # extract p-values for F-test at each lag
-                lag_p = {lag: float(gc_res[lag][0]['ssr_ftest'][1]) for lag in gc_res}
-                results['granger_pvalues'] = lag_p
-            else:
-                results['granger'] = 'statsmodels missing or no timestamp column'
-        except Exception as e:
-            results['granger_error'] = str(e)
-
-        results['analysis_time_seconds'] = time.time() - start_time
-        return results
-
-    # ------------------------- Pattern effectiveness -------------------------
-    def analyze_pattern_effectiveness(self, pattern_name: str, pattern_type: str = 'candlestick') -> Dict:
-        """
-        Enhanced pattern effectiveness including:
-        - Chi-square / G-test for categorical association (pattern occurrence vs regime)
-        - T-tests plus non-parametric Mann-Whitney U
-        - Effect size (Cohen's d)
-        """
-        df = self.dao.get_pattern_effectiveness(pattern_name, pattern_type)
-        if df is None or len(df) < 5:
-            return {'error': f'Insufficient pattern occurrences: {0 if df is None else len(df)}'}
-
-        # We'll need a full set of instances to compare with
-        all_instances_query = """
-        SELECT instance_id, regime, next_1d_return_pct
+        query = f"""
+        SELECT dominant_structure, {feature_name}
         FROM regime_instances
-        WHERE next_1d_return_pct IS NOT NULL
+        WHERE {feature_name} IS NOT NULL
+        {timeframe_filter}
         """
-        all_df = pd.DataFrame(self.dao.db.execute(all_instances_query, fetch=True))
-        if all_df.empty:
-            return {'error': 'Could not load all instances for baseline comparison'}
+        results = self.dao.db.execute(query, fetch=True)
 
-        with_ids = set(df['instance_id'])
-        with_pat = all_df[all_df['instance_id'].isin(with_ids)]['next_1d_return_pct']
-        without_pat = all_df[~all_df['instance_id'].isin(with_ids)]['next_1d_return_pct']
+        if not results or len(results) < 10:
+            return {
+                'feature': feature_name,
+                'error': 'Insufficient data for test',
+                'kw_statistic': None,
+                'kw_pvalue': None
+            }
 
-        # Classical tests
+        column_names = ['dominant_structure', feature_name]
+        df = self._results_to_dataframe(results, column_names)
+
+        regimes = df['dominant_structure'].unique()
+        if len(regimes) < 2:
+            return {
+                'feature': feature_name,
+                'error': 'Need at least 2 regimes to compare',
+                'kw_statistic': None,
+                'kw_pvalue': None
+            }
+
+        # Group data by regime
+        groups = [df.loc[df['dominant_structure'] == r, feature_name].dropna().values for r in regimes]
+        # Filter out empty groups
+        groups = [g for g in groups if len(g) > 0]
+
+        if len(groups) < 2:
+            return {
+                'feature': feature_name,
+                'error': 'Not enough groups with data',
+                'kw_statistic': None,
+                'kw_pvalue': None
+            }
+
+        # Kruskal-Wallis test
         try:
-            t_stat, t_p = stats.ttest_ind(with_pat, without_pat, nan_policy='omit')
+            kw_stat, kw_p = stats.kruskal(*groups)
         except Exception as e:
-            t_stat, t_p = None, str(e)
+            kw_stat, kw_p = None, None
 
+        # One-way ANOVA
         try:
-            u_stat, u_p = stats.mannwhitneyu(with_pat, without_pat, alternative='two-sided')
+            f_stat, anova_p = stats.f_oneway(*groups)
         except Exception as e:
-            u_stat, u_p = None, str(e)
+            f_stat, anova_p = None, None
 
-        # Cohen's d
-        try:
-            s1, s2 = with_pat.std(), without_pat.std()
-            pooled = math.sqrt((s1 ** 2 + s2 ** 2) / 2) if (not np.isnan(s1) and not np.isnan(s2)) else 0
-            cohens_d = ((with_pat.mean() - without_pat.mean()) / pooled) if pooled > 0 else 0
-        except Exception:
-            cohens_d = 0
-
-        # Categorical association: does pattern occurrence distribution vary by regime?
-        try:
-            contingency = pd.crosstab(all_df['regime'].astype(str), all_df['instance_id'].apply(lambda iid: iid in with_ids))
-            chi2, chi_p, dof, expected = stats.chi2_contingency(contingency)
-            # Cramer's V
-            n = contingency.values.sum()
-            phi2 = chi2 / n
-            r, k = contingency.shape
-            cramers_v = math.sqrt(phi2 / min(k - 1, r - 1)) if min(k - 1, r - 1) > 0 else 0
-        except Exception as e:
-            chi2, chi_p, cramers_v = None, None, None
+        interpretation = ""
+        if kw_p is not None and kw_p < 0.05:
+            interpretation = f"{feature_name} DIFFERS significantly across regimes (p={kw_p:.4f})."
+        else:
+            interpretation = f"{feature_name} does not differ significantly across regimes (p={kw_p:.4f})."
 
         return {
-            'pattern_name': pattern_name,
-            'occurrences': len(df),
-            't_test_p': float(t_p) if isinstance(t_p, (int, float)) else str(t_p),
-            'mannwhitney_p': float(u_p) if isinstance(u_p, (int, float)) else str(u_p),
-            'cohens_d': float(cohens_d),
-            'chi2_p': float(chi_p) if isinstance(chi_p, (int, float)) else str(chi_p),
-            'cramers_v': float(cramers_v) if cramers_v is not None else None,
-            'win_rate_with': float((with_pat > 0).mean() * 100),
-            'win_rate_without': float((without_pat > 0).mean() * 100)
+            'feature': feature_name,
+            'kw_statistic': float(kw_stat) if kw_stat is not None else None,
+            'kw_pvalue': float(kw_p) if kw_p is not None else None,
+            'anova_fstat': float(f_stat) if f_stat is not None else None,
+            'anova_pvalue': float(anova_p) if anova_p is not None else None,
+            'interpretation': interpretation
         }
 
-    # ----------------------- Multivariate & ML explainability -----------------
-    def find_optimal_indicator_combinations(self,
-                                            target_metric: str = 'next_1d_return_pct',
-                                            max_indicators: int = 6,
-                                            min_sample_for_combo: int = 20) -> List[Dict]:
+    # ---------------------- 2) POST-HOC PAIRWISE TESTS ------------------------
+    def pairwise_regime_tests(self, feature_name: str, method='mannwhitneyu') -> Dict:
         """
-        Upgraded search for indicator combinations using:
-        - Random Forest
-        - Permutation importance
-        - Optional SHAP (if installed)
-        - Penalized logistic regression (L1) for sparse combinations
-        Returns ranked combos with robust importance estimates.
-        
-        OPTIMIZED: Fixed 'indicators' KeyError, added progress tracking
+        Pairwise comparison of feature_name across all regime-pairs.
+
+        Args:
+            feature_name: numeric column in regime_instances
+            method: 'mannwhitneyu' or 'ttest' for pairwise comparison
+
+        Returns:
+            {
+              'feature': str,
+              'pairwise_tests': List[Dict],
+              'bonferroni_corrected': List[Dict]
+            }
         """
-        print(f"\n🎯 Finding optimal indicator combinations...")
-        start_time = time.time()
+        print(f"🔬 Running pairwise tests for {feature_name}...")
         
-        # Query with explicit error handling and comma separator
-        try:
-            query = """
-            SELECT ri.instance_id, ri.next_1d_return_pct, GROUP_CONCAT(rci.indicator_name, ',') as indicators
-            FROM regime_instances ri
-            LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
-            WHERE ri.next_1d_return_pct IS NOT NULL
-            GROUP BY ri.instance_id
-            HAVING COUNT(rci.indicator_name) >= 1
-            """
-            rows = self.dao.db.execute(query, fetch=True)
-        except Exception as e:
-            print(f"❌ Database query failed: {e}")
-            return []
-            
-        if not rows:
-            print("⚠️  No regime instances found with indicators")
-            return []
-            
-        print(f"✅ Found {len(rows)} regime instances")
-        df = pd.DataFrame(rows)
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
         
-        # CRITICAL FIX: Check if 'indicators' column exists
-        if 'indicators' not in df.columns:
-            print(f"❌ Error: 'indicators' column not in results")
-            print(f"   Available columns: {df.columns.tolist()}")
-            return []
-        
-        # CRITICAL FIX: Filter out rows with NULL or empty indicators
-        df['indicators'] = df['indicators'].fillna('')
-        df = df[df['indicators'] != '']
-        
-        if len(df) == 0:
-            print("⚠️  No instances have indicator data")
-            return []
-            
-        print(f"📊 Processing {len(df)} instances with indicator data...")
-
-        # Parse indicators - more robust
-        print("🔨 Building feature matrix...")
-        all_inds = set()
-        for indicators_str in df['indicators']:
-            if indicators_str and str(indicators_str).strip():
-                parts = str(indicators_str).split(',')
-                all_inds.update([p.strip() for p in parts if p.strip()])
-        
-        if not all_inds:
-            print("⚠️  No indicators extracted from data")
-            return []
-            
-        print(f"📈 Found {len(all_inds)} unique indicators")
-        
-        # Create binary indicator features with progress tracking
-        for idx, ind in enumerate(all_inds, 1):
-            df[f'has_{ind}'] = df['indicators'].apply(
-                lambda x: 1 if (x and ind in str(x).split(',')) else 0
-            )
-            self._progress_tracker(idx, len(all_inds), start_time, f"processing {ind}")
-
-        feature_cols = [c for c in df.columns if c.startswith('has_')]
-        
-        if not feature_cols:
-            print("⚠️  No feature columns created")
-            return []
-            
-        X = df[feature_cols].values
-        y = (df[target_metric] > 0).astype(int).values
-
-        if X.shape[0] < 30 or len(feature_cols) == 0:
-            print("⚠️  Insufficient samples for training")
-            return []
-
-        print(f"🤖 Training Random Forest on {len(X)} samples...")
-        rf = RandomForestClassifier(n_estimators=200, random_state=0, max_depth=6, n_jobs=-1)
-        rf.fit(X, y)
-        print("✅ Model trained successfully")
-
-        # Permutation importance (robust)
-        print("📊 Calculating permutation importance...")
-        try:
-            perm = permutation_importance(rf, X, y, n_repeats=20, random_state=0)
-            imp_df = pd.DataFrame({'indicator': [c.replace('has_', '') for c in feature_cols],
-                                   'perm_importance_mean': perm.importances_mean})
-            imp_df.sort_values('perm_importance_mean', ascending=False, inplace=True)
-        except Exception:
-            imp_df = pd.DataFrame({'indicator': [c.replace('has_', '') for c in feature_cols],
-                                   'perm_importance_mean': rf.feature_importances_})
-            imp_df.sort_values('perm_importance_mean', ascending=False, inplace=True)
-
-        top_inds = imp_df.head(max_indicators)['indicator'].tolist()
-        print(f"🏆 Top {len(top_inds)} indicators: {', '.join(top_inds[:5])}...")
-
-        print(f"🔍 Testing indicator combinations...")
-        combos = []
-        combo_count = 0
-        for r in range(2, min(len(top_inds), max_indicators) + 1):
-            for combo in itertools.combinations(top_inds, r):
-                combo_count += 1
-                mask = np.ones(len(df), dtype=bool)
-                for ind in combo:
-                    mask &= df[f'has_{ind}'] == 1
-                subset = df[mask]
-                if len(subset) >= min_sample_for_combo:
-                    win_rate = float((subset[target_metric] > 0).mean() * 100)
-                    avg_ret = float(subset[target_metric].mean())
-                    combos.append({'indicators': list(combo), 'sample_size': len(subset), 'win_rate': win_rate, 'avg_return': avg_ret, 'score': win_rate * avg_ret})
-
-        combos.sort(key=lambda x: x['score'], reverse=True)
-
-        # Optional SHAP explanation for top combo's RF (if SHAP available)
-        extra = {}
-        if SHAP_AVAILABLE and len(top_inds) > 0:
-            try:
-                print("🔬 Computing SHAP values...")
-                explainer = shap.TreeExplainer(rf)
-                shap_values = explainer.shap_values(X)
-                # for binary y shap_values is list-like; compute mean abs for class 1
-                if isinstance(shap_values, list):
-                    shap_mean = np.mean(np.abs(shap_values[1]), axis=0)
-                else:
-                    shap_mean = np.mean(np.abs(shap_values), axis=0)
-                shap_df = pd.DataFrame({'indicator': [c.replace('has_', '') for c in feature_cols], 'shap_mean_abs': shap_mean})
-                shap_df.sort_values('shap_mean_abs', ascending=False, inplace=True)
-                extra['shap_ranking'] = shap_df.to_dict('records')
-            except Exception as e:
-                extra['shap_error'] = str(e)
-
-        elapsed = time.time() - start_time
-        print(f"✅ Tested {combo_count} combinations in {elapsed:.1f}s")
-        print(f"📊 Found {len(combos)} valid combinations (min {min_sample_for_combo} samples)")
-        
-        out = {'combinations_top': combos[:50], 'importance_table': imp_df.to_dict('records')}
-        out.update(extra)
-        return out
-
-    # ---------------------- Transition / Markov influence ---------------------
-    def transition_influence(self, lookback: int = 5, indicator_names: Optional[List[str]] = None) -> Dict:
-        """
-        Estimate how indicators influence regime transition probabilities.
-        Approach:
-        - Build (t -> t+1) transition dataset with features = indicators at t
-        - Fit multiclass logistic regression (L1) to predict next_regime
-        - Report coefficients and significance (if possible)
-        """
-        # Load transitions (assumes regime_instances has timestamp, regime, instance_id)
-        query = """
-        SELECT instance_id, timestamp, regime
+        query = f"""
+        SELECT dominant_structure, {feature_name}
         FROM regime_instances
-        ORDER BY timestamp
+        WHERE {feature_name} IS NOT NULL
+        {timeframe_filter}
         """
-        rows = self.dao.db.execute(query, fetch=True)
-        if not rows:
-            return {'error': 'No regime instance timeline available'}
-        ri = pd.DataFrame(rows)
-        ri = ri.sort_values('timestamp')
+        results = self.dao.db.execute(query, fetch=True)
 
-        # Get indicator snapshots for those timestamps
-        # We expect a DAO method that can return indicator mean_value per instance
-        # We'll use a simple join table access: regime_confirming_indicators
-        q2 = """
-        SELECT instance_id, indicator_name, mean_value
-        FROM regime_confirming_indicators
+        if not results or len(results) < 10:
+            return {
+                'feature': feature_name,
+                'error': 'Insufficient data',
+                'pairwise_tests': [],
+                'bonferroni_corrected': []
+            }
+
+        column_names = ['dominant_structure', feature_name]
+        df = self._results_to_dataframe(results, column_names)
+
+        regimes = df['dominant_structure'].unique()
+        if len(regimes) < 2:
+            return {
+                'feature': feature_name,
+                'error': 'Need at least 2 regimes',
+                'pairwise_tests': [],
+                'bonferroni_corrected': []
+            }
+
+        pairs = list(itertools.combinations(regimes, 2))
+        pairwise_results = []
+
+        for r1, r2 in pairs:
+            g1 = df.loc[df['dominant_structure'] == r1, feature_name].dropna().values
+            g2 = df.loc[df['dominant_structure'] == r2, feature_name].dropna().values
+
+            if len(g1) < 2 or len(g2) < 2:
+                continue
+
+            try:
+                if method == 'mannwhitneyu':
+                    stat, pval = stats.mannwhitneyu(g1, g2, alternative='two-sided')
+                else:
+                    stat, pval = stats.ttest_ind(g1, g2)
+
+                pairwise_results.append({
+                    'regime_1': r1,
+                    'regime_2': r2,
+                    'statistic': float(stat),
+                    'pvalue': float(pval)
+                })
+            except Exception as e:
+                pass
+
+        if not pairwise_results:
+            return {
+                'feature': feature_name,
+                'pairwise_tests': [],
+                'bonferroni_corrected': []
+            }
+
+        # Bonferroni correction
+        pvals = [x['pvalue'] for x in pairwise_results]
+        corrected = self._holm_bonferroni(pvals, alpha=0.05)
+
+        for i, pr in enumerate(pairwise_results):
+            pr['reject_null'] = corrected[i]
+
+        return {
+            'feature': feature_name,
+            'pairwise_tests': pairwise_results,
+            'bonferroni_corrected': pairwise_results
+        }
+
+    # ---------------------- 3) CHI-SQUARE FOR CATEGORICAL ---------------------
+    def chi_square_indicator_regime(self, indicator_name: str) -> Dict:
         """
-        rci_rows = self.dao.db.execute(q2, fetch=True)
-        rci = pd.DataFrame(rci_rows)
-        if rci.empty:
-            return {'error': 'No indicator snapshot table found'}
+        Chi-square test: does indicator_name presence/absence depend on regime?
 
-        pivot = rci.pivot_table(index='instance_id', columns='indicator_name', values='mean_value', aggfunc='mean')
-        pivot.reset_index(inplace=True)
+        Args:
+            indicator_name: name of an indicator in regime_confirming_indicators
 
-        merged = ri.merge(pivot, on='instance_id', how='left')
-        merged['next_regime'] = merged['regime'].shift(-1)
-        merged = merged.dropna(subset=['next_regime'])
+        Returns:
+            {
+              'indicator': str,
+              'chi2_stat': float,
+              'pvalue': float,
+              'cramersV': float,
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Running Chi-square test for {indicator_name}...")
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        query = f"""
+        SELECT ri.instance_id, ri.dominant_structure,
+               (SELECT COUNT(*) 
+                FROM regime_confirming_indicators rci
+                WHERE rci.instance_id = ri.instance_id
+                  AND rci.indicator_name = ?
+               ) as has_indicator
+        FROM regime_instances ri
+        WHERE 1=1
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, (indicator_name,), fetch=True)
 
-        if indicator_names is None:
-            indicator_names = [c for c in pivot.columns if c != 'instance_id']
+        if not results or len(results) < 10:
+            return {
+                'indicator': indicator_name,
+                'error': 'Insufficient data',
+                'chi2_stat': None,
+                'pvalue': None
+            }
 
-        X = merged[indicator_names].fillna(0).values
-        y = merged['next_regime'].values
+        column_names = ['instance_id', 'dominant_structure', 'has_indicator']
+        df = self._results_to_dataframe(results, column_names)
+        
+        df['has_indicator'] = df['has_indicator'].apply(lambda x: 1 if x > 0 else 0)
 
-        if len(np.unique(y)) < 2:
-            return {'error': 'Not enough regime transitions to model'}
+        # Build contingency table
+        ct = pd.crosstab(df['dominant_structure'], df['has_indicator'])
 
-        # Fit multinomial logistic with L1 if supported
+        if ct.shape[0] < 2 or ct.shape[1] < 2:
+            return {
+                'indicator': indicator_name,
+                'error': 'Not enough variation in data',
+                'chi2_stat': None,
+                'pvalue': None
+            }
+
         try:
-            clf = LogisticRegression(penalty='l2', multi_class='multinomial', solver='saga', max_iter=200, random_state=0)
-            clf.fit(X, y)
-            coefs = clf.coef_
-            classes = clf.classes_
-            coef_table = []
-            for i, cls in enumerate(classes):
-                for j, ind in enumerate(indicator_names):
-                    coef_table.append({'target_next_regime': cls, 'indicator': ind, 'coef': float(coefs[i, j])})
-            return {'coef_table': coef_table}
+            chi2, pval, dof, expected = stats.chi2_contingency(ct)
         except Exception as e:
-            return {'error': f'LogReg failed: {e}'}
+            return {
+                'indicator': indicator_name,
+                'error': str(e),
+                'chi2_stat': None,
+                'pvalue': None
+            }
 
-    # ---------------------- Dimensionality & cluster tests -------------------
-    def pca_and_cluster_analysis(self, feature_columns: List[str], n_clusters: int = 3) -> Dict:
+        # Cramer's V
+        n = ct.sum().sum()
+        min_dim = min(ct.shape[0] - 1, ct.shape[1] - 1)
+        cramers_v = math.sqrt(chi2 / (n * min_dim)) if min_dim > 0 else 0.0
+
+        interp = ""
+        if pval < 0.05:
+            interp = f"Indicator '{indicator_name}' is significantly associated with regime (p={pval:.4f}, V={cramers_v:.3f})."
+        else:
+            interp = f"No significant association found (p={pval:.4f})."
+
+        return {
+            'indicator': indicator_name,
+            'chi2_stat': float(chi2),
+            'pvalue': float(pval),
+            'cramersV': float(cramers_v),
+            'interpretation': interp
+        }
+
+    # ---------------------- 4) MUTUAL INFORMATION (MI) ------------------------
+    def mutual_info_indicator_outcome(self, indicator_name: str, outcome='next_1d_return_pct') -> Dict:
         """
-        Run PCA and basic clustering diagnostics to find which features separate regimes.
-        Returns PCA explained variance, loadings and silhouette score for clustering.
+        Compute mutual information between an indicator's presence and an outcome variable.
+
+        Args:
+            indicator_name: name of indicator
+            outcome: numeric column in regime_instances (e.g., 'next_1d_return_pct')
+
+        Returns:
+            {
+              'indicator': str,
+              'outcome': str,
+              'mutual_info': float,
+              'interpretation': str
+            }
         """
-        # Expect a DAO method to return a combined features table
-        query = f"SELECT instance_id, {', '.join(feature_columns)} FROM regime_instances WHERE {feature_columns[0]} IS NOT NULL"
-        rows = self.dao.db.execute(query, fetch=True)
-        if not rows:
-            return {'error': 'No data'}
-        df = pd.DataFrame(rows).dropna()
-        X = df[feature_columns].values
-        scaler = StandardScaler().fit(X)
-        Xs = scaler.transform(X)
+        print(f"🔬 Computing mutual information: {indicator_name} -> {outcome}...")
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        query = f"""
+        SELECT ri.instance_id, ri.{outcome},
+               (SELECT COUNT(*) 
+                FROM regime_confirming_indicators rci
+                WHERE rci.instance_id = ri.instance_id
+                  AND rci.indicator_name = ?
+               ) as has_indicator
+        FROM regime_instances ri
+        WHERE ri.{outcome} IS NOT NULL
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, (indicator_name,), fetch=True)
 
-        pca = PCA(n_components=min(10, Xs.shape[1]))
-        pcs = pca.fit_transform(Xs)
-        loadings = pca.components_.T
-        explained = pca.explained_variance_ratio_.tolist()
+        if not results or len(results) < 10:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': 'Insufficient data',
+                'mutual_info': None
+            }
 
-        # Clustering and silhouette
+        column_names = ['instance_id', outcome, 'has_indicator']
+        df = self._results_to_dataframe(results, column_names)
+        
+        df['has_indicator'] = df['has_indicator'].apply(lambda x: 1 if x > 0 else 0)
+
+        X = df[['has_indicator']].values
+        y = df[outcome].values
+
         try:
-            km = KMeans(n_clusters=n_clusters, random_state=0)
-            labels = km.fit_predict(pcs)
-            sil = silhouette_score(pcs, labels)
+            mi_val = mutual_info_regression(X, y, random_state=42)[0]
         except Exception as e:
-            sil = str(e)
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': str(e),
+                'mutual_info': None
+            }
 
-        loading_table = [{ 'feature': feature_columns[i], 'loading_vector': loadings[i].tolist() } for i in range(len(feature_columns))]
-        return {'explained_variance_ratio': explained, 'loadings': loading_table, 'silhouette': sil}
+        interp = ""
+        if mi_val > 0.01:
+            interp = f"MI={mi_val:.4f} suggests indicator '{indicator_name}' shares some information with {outcome}."
+        else:
+            interp = f"MI={mi_val:.4f} is very low; little shared information."
 
-    # ---------------------- Strategy generation (ported from V1) ----------------
-    def generate_strategy_from_instances(
+        return {
+            'indicator': indicator_name,
+            'outcome': outcome,
+            'mutual_info': float(mi_val),
+            'interpretation': interp
+        }
+
+    # ---------------------- 5) DISTANCE CORRELATION --------------------------
+    def distance_corr_indicator_outcome(self, indicator_name: str, outcome='next_1d_return_pct') -> Dict:
+        """
+        Distance correlation between indicator presence and outcome.
+
+        Args:
+            indicator_name: name of indicator
+            outcome: numeric column (e.g., 'next_1d_return_pct')
+
+        Returns:
+            {
+              'indicator': str,
+              'outcome': str,
+              'dcor': float,
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Computing distance correlation: {indicator_name} -> {outcome}...")
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        query = f"""
+        SELECT ri.instance_id, ri.{outcome},
+               (SELECT COUNT(*) 
+                FROM regime_confirming_indicators rci
+                WHERE rci.instance_id = ri.instance_id
+                  AND rci.indicator_name = ?
+               ) as has_indicator
+        FROM regime_instances ri
+        WHERE ri.{outcome} IS NOT NULL
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, (indicator_name,), fetch=True)
+
+        if not results or len(results) < 10:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': 'Insufficient data',
+                'dcor': None
+            }
+
+        column_names = ['instance_id', outcome, 'has_indicator']
+        df = self._results_to_dataframe(results, column_names)
+        
+        df['has_indicator'] = df['has_indicator'].apply(lambda x: 1 if x > 0 else 0)
+
+        x = df['has_indicator'].values
+        y = df[outcome].values
+
+        try:
+            dcor_val = distance_correlation(x, y)
+        except Exception as e:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': str(e),
+                'dcor': None
+            }
+
+        interp = ""
+        if dcor_val > 0.05:
+            interp = f"dCor={dcor_val:.4f} suggests nonlinear dependence between '{indicator_name}' and {outcome}."
+        else:
+            interp = f"dCor={dcor_val:.4f} is low; little nonlinear dependence."
+
+        return {
+            'indicator': indicator_name,
+            'outcome': outcome,
+            'dcor': float(dcor_val),
+            'interpretation': interp
+        }
+
+    # ---------------------- 6) GRANGER CAUSALITY ------------------------------
+    def granger_causality_test(self, indicator_name: str, outcome='next_1d_return_pct', maxlag=3) -> Dict:
+        """
+        Granger causality test to check if indicator changes "cause" changes in outcome.
+
+        Requires statsmodels. If not available, returns fallback message.
+
+        Args:
+            indicator_name: name of indicator
+            outcome: numeric column (e.g., 'next_1d_return_pct')
+            maxlag: max lag for Granger test
+
+        Returns:
+            {
+              'indicator': str,
+              'outcome': str,
+              'granger_pvalue': float,
+              'interpretation': str
+            }
+        """
+        if not STATSMODELS:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': 'statsmodels not available',
+                'granger_pvalue': None
+            }
+
+        print(f"🔬 Running Granger causality: {indicator_name} -> {outcome}...")
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        query = f"""
+        SELECT ri.start_datetime, ri.{outcome},
+               (SELECT COUNT(*) 
+                FROM regime_confirming_indicators rci
+                WHERE rci.instance_id = ri.instance_id
+                  AND rci.indicator_name = ?
+               ) as has_indicator
+        FROM regime_instances ri
+        WHERE ri.{outcome} IS NOT NULL
+        {timeframe_filter}
+        ORDER BY ri.start_datetime
+        """
+        results = self.dao.db.execute(query, (indicator_name,), fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': 'Insufficient time-series data',
+                'granger_pvalue': None
+            }
+
+        column_names = ['start_datetime', outcome, 'has_indicator']
+        df = self._results_to_dataframe(results, column_names)
+        
+        df['has_indicator'] = df['has_indicator'].apply(lambda x: 1 if x > 0 else 0)
+
+        # Need at least maxlag + 1 observations
+        if len(df) < maxlag + 10:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': f'Need at least {maxlag+10} time-ordered observations',
+                'granger_pvalue': None
+            }
+
+        # Build time series
+        ts_data = df[[outcome, 'has_indicator']].values
+
+        try:
+            from statsmodels.tsa.stattools import grangercausalitytests
+            gc_res = grangercausalitytests(ts_data, maxlag=maxlag, verbose=False)
+            
+            # Extract p-values for each lag
+            pvals = []
+            for lag in range(1, maxlag + 1):
+                test_stats = gc_res[lag][0]
+                # Use F-test p-value
+                pval = test_stats['ssr_ftest'][1]
+                pvals.append(pval)
+            
+            min_pval = min(pvals)
+            
+        except Exception as e:
+            return {
+                'indicator': indicator_name,
+                'outcome': outcome,
+                'error': f'Granger test failed: {str(e)}',
+                'granger_pvalue': None
+            }
+
+        interp = ""
+        if min_pval < 0.05:
+            interp = f"Granger test suggests '{indicator_name}' may cause changes in {outcome} (p={min_pval:.4f})."
+        else:
+            interp = f"No Granger causality detected (p={min_pval:.4f})."
+
+        return {
+            'indicator': indicator_name,
+            'outcome': outcome,
+            'granger_pvalue': float(min_pval),
+            'interpretation': interp
+        }
+
+    # ---------------------- 7) MULTIVARIATE TESTS -----------------------------
+    def multivariate_regime_test(self, features: List[str]) -> Dict:
+        """
+        MANOVA-like test or logistic regression to see if multiple features
+        jointly differ across regimes.
+
+        Args:
+            features: list of numeric columns in regime_instances
+
+        Returns:
+            {
+              'features': List[str],
+              'method': str,
+              'result': Dict,
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Running multivariate test for {len(features)} features...")
+        
+        if not features:
+            return {
+                'features': [],
+                'error': 'No features provided',
+                'method': None,
+                'result': {}
+            }
+
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        # Build query
+        feature_cols = ", ".join(features)
+        query = f"""
+        SELECT dominant_structure, {feature_cols}
+        FROM regime_instances
+        WHERE {" AND ".join([f"{f} IS NOT NULL" for f in features])}
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'features': features,
+                'error': 'Insufficient data for multivariate test',
+                'method': None,
+                'result': {}
+            }
+
+        column_names = ['dominant_structure'] + features
+        df = self._results_to_dataframe(results, column_names)
+
+        regimes = df['dominant_structure'].unique()
+        if len(regimes) < 2:
+            return {
+                'features': features,
+                'error': 'Need at least 2 regimes',
+                'method': None,
+                'result': {}
+            }
+
+        # Try logistic regression approach
+        try:
+            # Encode regimes as numeric labels
+            regime_map = {r: i for i, r in enumerate(regimes)}
+            df['regime_label'] = df['dominant_structure'].map(regime_map)
+
+            X = df[features].values
+            y = df['regime_label'].values
+
+            # Standardize features
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            # Fit L1-regularized logistic regression
+            lr = LogisticRegression(penalty='l1', solver='liblinear', random_state=42, max_iter=200)
+            lr.fit(X_scaled, y)
+
+            # Cross-validation score
+            cv_scores = cross_val_score(lr, X_scaled, y, cv=min(5, len(regimes)), scoring='accuracy')
+            mean_cv_score = cv_scores.mean()
+
+            # Feature importance (coefficient magnitudes)
+            coef_importance = np.abs(lr.coef_).mean(axis=0)
+            feature_importance = {f: float(imp) for f, imp in zip(features, coef_importance)}
+
+            interp = f"Multivariate logistic regression achieved {mean_cv_score:.2%} accuracy predicting regimes. "
+            interp += f"Feature importance: {feature_importance}"
+
+            return {
+                'features': features,
+                'method': 'logistic_regression',
+                'result': {
+                    'cv_accuracy': float(mean_cv_score),
+                    'feature_importance': feature_importance
+                },
+                'interpretation': interp
+            }
+
+        except Exception as e:
+            return {
+                'features': features,
+                'error': f'Multivariate test failed: {str(e)}',
+                'method': None,
+                'result': {}
+            }
+
+    # ---------------------- 8) PERMUTATION IMPORTANCE -------------------------
+    def permutation_importance_regime(self, features: List[str]) -> Dict:
+        """
+        Random Forest + permutation importance to identify which features
+        are most important for predicting regime.
+
+        Args:
+            features: list of numeric columns in regime_instances
+
+        Returns:
+            {
+              'features': List[str],
+              'importance_scores': Dict[str, float],
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Computing permutation importance for {len(features)} features...")
+        
+        if not features:
+            return {
+                'features': [],
+                'error': 'No features provided',
+                'importance_scores': {}
+            }
+
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        feature_cols = ", ".join(features)
+        query = f"""
+        SELECT dominant_structure, {feature_cols}
+        FROM regime_instances
+        WHERE {" AND ".join([f"{f} IS NOT NULL" for f in features])}
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'features': features,
+                'error': 'Insufficient data',
+                'importance_scores': {}
+            }
+
+        column_names = ['dominant_structure'] + features
+        df = self._results_to_dataframe(results, column_names)
+
+        regimes = df['dominant_structure'].unique()
+        if len(regimes) < 2:
+            return {
+                'features': features,
+                'error': 'Need at least 2 regimes',
+                'importance_scores': {}
+            }
+
+        try:
+            regime_map = {r: i for i, r in enumerate(regimes)}
+            df['regime_label'] = df['dominant_structure'].map(regime_map)
+
+            X = df[features].values
+            y = df['regime_label'].values
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            # Train Random Forest
+            rf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
+            rf.fit(X_scaled, y)
+
+            # Compute permutation importance
+            perm_imp = permutation_importance(rf, X_scaled, y, n_repeats=10, random_state=42, n_jobs=-1)
+
+            importance_scores = {f: float(perm_imp.importances_mean[i]) for i, f in enumerate(features)}
+
+            # Sort by importance
+            sorted_features = sorted(importance_scores.items(), key=lambda x: x[1], reverse=True)
+
+            interp = "Permutation importance (Random Forest): "
+            interp += ", ".join([f"{f}={v:.4f}" for f, v in sorted_features[:5]])
+
+            return {
+                'features': features,
+                'importance_scores': importance_scores,
+                'interpretation': interp
+            }
+
+        except Exception as e:
+            return {
+                'features': features,
+                'error': f'Permutation importance failed: {str(e)}',
+                'importance_scores': {}
+            }
+
+    # ---------------------- 9) SHAP VALUES ------------------------------------
+    def shap_values_regime(self, features: List[str], max_samples: int = 500) -> Dict:
+        """
+        SHAP values for regime prediction using Random Forest.
+
+        Args:
+            features: list of numeric columns
+            max_samples: max samples to use for SHAP (for speed)
+
+        Returns:
+            {
+              'features': List[str],
+              'shap_values': Dict[str, float],  # mean absolute SHAP per feature
+              'interpretation': str
+            }
+        """
+        if not SHAP_AVAILABLE:
+            return {
+                'features': features,
+                'error': 'SHAP library not available',
+                'shap_values': {}
+            }
+
+        print(f"🔬 Computing SHAP values for {len(features)} features...")
+        
+        if not features:
+            return {
+                'features': [],
+                'error': 'No features provided',
+                'shap_values': {}
+            }
+
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        feature_cols = ", ".join(features)
+        query = f"""
+        SELECT dominant_structure, {feature_cols}
+        FROM regime_instances
+        WHERE {" AND ".join([f"{f} IS NOT NULL" for f in features])}
+        {timeframe_filter}
+        LIMIT {max_samples}
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'features': features,
+                'error': 'Insufficient data',
+                'shap_values': {}
+            }
+
+        column_names = ['dominant_structure'] + features
+        df = self._results_to_dataframe(results, column_names)
+
+        regimes = df['dominant_structure'].unique()
+        if len(regimes) < 2:
+            return {
+                'features': features,
+                'error': 'Need at least 2 regimes',
+                'shap_values': {}
+            }
+
+        try:
+            regime_map = {r: i for i, r in enumerate(regimes)}
+            df['regime_label'] = df['dominant_structure'].map(regime_map)
+
+            X = df[features].values
+            y = df['regime_label'].values
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            # Train Random Forest
+            rf = RandomForestClassifier(n_estimators=50, random_state=42, max_depth=10)
+            rf.fit(X_scaled, y)
+
+            # Compute SHAP values
+            explainer = shap.TreeExplainer(rf)
+            shap_vals = explainer.shap_values(X_scaled)
+
+            # Average absolute SHAP values per feature
+            # shap_vals is a list (one per class) or array
+            if isinstance(shap_vals, list):
+                # Multi-class: average over classes
+                mean_abs_shap = np.mean([np.abs(sv).mean(axis=0) for sv in shap_vals], axis=0)
+            else:
+                mean_abs_shap = np.abs(shap_vals).mean(axis=0)
+
+            shap_scores = {f: float(mean_abs_shap[i]) for i, f in enumerate(features)}
+
+            sorted_features = sorted(shap_scores.items(), key=lambda x: x[1], reverse=True)
+
+            interp = "SHAP importance: "
+            interp += ", ".join([f"{f}={v:.4f}" for f, v in sorted_features[:5]])
+
+            return {
+                'features': features,
+                'shap_values': shap_scores,
+                'interpretation': interp
+            }
+
+        except Exception as e:
+            return {
+                'features': features,
+                'error': f'SHAP computation failed: {str(e)}',
+                'shap_values': {}
+            }
+
+    # ---------------------- 10) MARKOV TRANSITIONS ----------------------------
+    def markov_transition_analysis(self) -> Dict:
+        """
+        Analyze regime transitions to find which indicators/patterns
+        are most associated with transitions from regime A to regime B.
+
+        Returns:
+            {
+              'transition_matrix': Dict,
+              'indicator_transition_associations': List[Dict],
+              'interpretation': str
+            }
+        """
+        print("🔬 Analyzing Markov transitions...")
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        # Get sequential regime instances ordered by time
+        query = f"""
+        SELECT instance_id, dominant_structure, start_datetime
+        FROM regime_instances
+        WHERE 1=1
+        {timeframe_filter}
+        ORDER BY start_datetime
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 10:
+            return {
+                'transition_matrix': {},
+                'indicator_transition_associations': [],
+                'error': 'Insufficient data'
+            }
+
+        column_names = ['instance_id', 'dominant_structure', 'start_datetime']
+        df = self._results_to_dataframe(results, column_names)
+
+        # Build transition pairs
+        transitions = []
+        for i in range(len(df) - 1):
+            from_regime = df.iloc[i]['dominant_structure']
+            to_regime = df.iloc[i + 1]['dominant_structure']
+            instance_id = df.iloc[i]['instance_id']
+            transitions.append({
+                'from': from_regime,
+                'to': to_regime,
+                'instance_id': instance_id
+            })
+
+        if not transitions:
+            return {
+                'transition_matrix': {},
+                'indicator_transition_associations': [],
+                'error': 'No transitions found'
+            }
+
+        # Build transition matrix
+        from collections import Counter
+        transition_counts = Counter([(t['from'], t['to']) for t in transitions])
+        
+        transition_matrix = {}
+        for (from_r, to_r), count in transition_counts.items():
+            if from_r not in transition_matrix:
+                transition_matrix[from_r] = {}
+            transition_matrix[from_r][to_r] = count
+
+        # Find indicators associated with specific transitions
+        # For each transition type, find most common indicators
+        indicator_associations = []
+        
+        for (from_r, to_r), count in transition_counts.most_common(5):
+            # Get instance IDs for this transition type
+            transition_instances = [t['instance_id'] for t in transitions 
+                                   if t['from'] == from_r and t['to'] == to_r]
+            
+            if not transition_instances:
+                continue
+            
+            # Get indicators for these instances
+            placeholders = ','.join(['?'] * len(transition_instances))
+            ind_query = f"""
+            SELECT indicator_name, COUNT(*) as freq
+            FROM regime_confirming_indicators
+            WHERE instance_id IN ({placeholders})
+            GROUP BY indicator_name
+            ORDER BY freq DESC
+            LIMIT 5
+            """
+            ind_results = self.dao.db.execute(ind_query, tuple(transition_instances), fetch=True)
+            
+            if ind_results:
+                top_indicators = [{'indicator': row[0], 'frequency': row[1]} for row in ind_results]
+                
+                indicator_associations.append({
+                    'transition': f"{from_r} -> {to_r}",
+                    'count': count,
+                    'top_indicators': top_indicators
+                })
+
+        interp = f"Found {len(transitions)} regime transitions. "
+        interp += f"Most common: {list(transition_counts.most_common(3))}. "
+        if indicator_associations:
+            interp += f"Top transition associations analyzed."
+
+        return {
+            'transition_matrix': transition_matrix,
+            'indicator_transition_associations': indicator_associations,
+            'interpretation': interp
+        }
+
+    # ---------------------- 11) PCA CONTRIBUTION ------------------------------
+    def pca_regime_contribution(self, features: List[str], n_components: int = 3) -> Dict:
+        """
+        PCA to see which features contribute most to regime separation.
+
+        Args:
+            features: list of numeric columns
+            n_components: number of principal components
+
+        Returns:
+            {
+              'features': List[str],
+              'pca_loadings': Dict,
+              'explained_variance': List[float],
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Running PCA with {n_components} components...")
+        
+        if not features:
+            return {
+                'features': [],
+                'error': 'No features provided',
+                'pca_loadings': {},
+                'explained_variance': []
+            }
+
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        feature_cols = ", ".join(features)
+        query = f"""
+        SELECT dominant_structure, {feature_cols}
+        FROM regime_instances
+        WHERE {" AND ".join([f"{f} IS NOT NULL" for f in features])}
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'features': features,
+                'error': 'Insufficient data',
+                'pca_loadings': {},
+                'explained_variance': []
+            }
+
+        column_names = ['dominant_structure'] + features
+        df = self._results_to_dataframe(results, column_names)
+
+        try:
+            X = df[features].values
+            
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            pca = PCA(n_components=min(n_components, len(features)))
+            pca.fit(X_scaled)
+
+            # Loadings (components)
+            loadings = pca.components_
+
+            # For each PC, show feature contributions
+            pca_loadings = {}
+            for i in range(loadings.shape[0]):
+                pc_name = f"PC{i+1}"
+                pca_loadings[pc_name] = {f: float(loadings[i, j]) for j, f in enumerate(features)}
+
+            explained_var = pca.explained_variance_ratio_.tolist()
+
+            interp = f"PCA: {len(explained_var)} components explain {sum(explained_var):.2%} of variance. "
+            interp += f"Top PC1 loadings: {sorted(pca_loadings['PC1'].items(), key=lambda x: abs(x[1]), reverse=True)[:3]}"
+
+            return {
+                'features': features,
+                'pca_loadings': pca_loadings,
+                'explained_variance': explained_var,
+                'interpretation': interp
+            }
+
+        except Exception as e:
+            return {
+                'features': features,
+                'error': f'PCA failed: {str(e)}',
+                'pca_loadings': {},
+                'explained_variance': []
+            }
+
+    # ---------------------- 12) SILHOUETTE SCORE ------------------------------
+    def silhouette_regime_clustering(self, features: List[str]) -> Dict:
+        """
+        Measure how well regimes form natural clusters in feature space using silhouette score.
+
+        Args:
+            features: list of numeric columns
+
+        Returns:
+            {
+              'features': List[str],
+              'silhouette_score': float,
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Computing silhouette score for {len(features)} features...")
+        
+        if not features:
+            return {
+                'features': [],
+                'error': 'No features provided',
+                'silhouette_score': None
+            }
+
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        feature_cols = ", ".join(features)
+        query = f"""
+        SELECT dominant_structure, {feature_cols}
+        FROM regime_instances
+        WHERE {" AND ".join([f"{f} IS NOT NULL" for f in features])}
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'features': features,
+                'error': 'Insufficient data',
+                'silhouette_score': None
+            }
+
+        column_names = ['dominant_structure'] + features
+        df = self._results_to_dataframe(results, column_names)
+
+        regimes = df['dominant_structure'].unique()
+        if len(regimes) < 2:
+            return {
+                'features': features,
+                'error': 'Need at least 2 regimes',
+                'silhouette_score': None
+            }
+
+        try:
+            regime_map = {r: i for i, r in enumerate(regimes)}
+            labels = df['dominant_structure'].map(regime_map).values
+
+            X = df[features].values
+            
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            sil_score = silhouette_score(X_scaled, labels)
+
+            interp = f"Silhouette score={sil_score:.3f}. "
+            if sil_score > 0.5:
+                interp += "Regimes form well-separated clusters."
+            elif sil_score > 0.25:
+                interp += "Regimes are somewhat separated."
+            else:
+                interp += "Regimes overlap significantly in feature space."
+
+            return {
+                'features': features,
+                'silhouette_score': float(sil_score),
+                'interpretation': interp
+            }
+
+        except Exception as e:
+            return {
+                'features': features,
+                'error': f'Silhouette computation failed: {str(e)}',
+                'silhouette_score': None
+            }
+
+    # ---------------------- 13) CLUSTER STABILITY -----------------------------
+    def cluster_stability_test(self, features: List[str], n_clusters_range: range = range(2, 6)) -> Dict:
+        """
+        Test cluster stability by comparing k-means results across different k values.
+
+        Args:
+            features: list of numeric columns
+            n_clusters_range: range of k values to test
+
+        Returns:
+            {
+              'features': List[str],
+              'inertia_scores': Dict[int, float],
+              'silhouette_scores': Dict[int, float],
+              'interpretation': str
+            }
+        """
+        print(f"🔬 Testing cluster stability for k in {list(n_clusters_range)}...")
+        
+        if not features:
+            return {
+                'features': [],
+                'error': 'No features provided',
+                'inertia_scores': {},
+                'silhouette_scores': {}
+            }
+
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        feature_cols = ", ".join(features)
+        query = f"""
+        SELECT {feature_cols}
+        FROM regime_instances
+        WHERE {" AND ".join([f"{f} IS NOT NULL" for f in features])}
+        {timeframe_filter}
+        """
+        results = self.dao.db.execute(query, fetch=True)
+
+        if not results or len(results) < 20:
+            return {
+                'features': features,
+                'error': 'Insufficient data',
+                'inertia_scores': {},
+                'silhouette_scores': {}
+            }
+
+        column_names = features
+        df = self._results_to_dataframe(results, column_names)
+
+        try:
+            X = df[features].values
+            
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            inertia_scores = {}
+            silhouette_scores = {}
+
+            for k in n_clusters_range:
+                if k >= len(X):
+                    continue
+                    
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(X_scaled)
+                
+                inertia_scores[k] = float(kmeans.inertia_)
+                
+                if k > 1:
+                    sil = silhouette_score(X_scaled, labels)
+                    silhouette_scores[k] = float(sil)
+
+            interp = f"Cluster stability tested for k={list(n_clusters_range)}. "
+            if silhouette_scores:
+                best_k = max(silhouette_scores, key=silhouette_scores.get)
+                interp += f"Best k={best_k} with silhouette={silhouette_scores[best_k]:.3f}."
+
+            return {
+                'features': features,
+                'inertia_scores': inertia_scores,
+                'silhouette_scores': silhouette_scores,
+                'interpretation': interp
+            }
+
+        except Exception as e:
+            return {
+                'features': features,
+                'error': f'Cluster stability test failed: {str(e)}',
+                'inertia_scores': {},
+                'silhouette_scores': {}
+            }
+
+    # ---------------------- INTEGRATED ANALYSIS -------------------------------
+    def analyze_indicator_causality(self, indicator_name: str) -> Dict:
+        """
+        Run a comprehensive suite of tests for a single indicator.
+
+        Returns:
+            {
+              'indicator': str,
+              'chi_square': Dict,
+              'mutual_info': Dict,
+              'distance_corr': Dict,
+              'granger': Dict,
+              'summary': str
+            }
+        """
+        results = {
+            'indicator': indicator_name,
+            'chi_square': self.chi_square_indicator_regime(indicator_name),
+            'mutual_info': self.mutual_info_indicator_outcome(indicator_name),
+            'distance_corr': self.distance_corr_indicator_outcome(indicator_name),
+            'granger': self.granger_causality_test(indicator_name)
+        }
+
+        # Build summary
+        summary = f"Analysis for '{indicator_name}':\n"
+        
+        if 'pvalue' in results['chi_square'] and results['chi_square']['pvalue'] is not None:
+            summary += f"  - Chi-square p={results['chi_square']['pvalue']:.4f}\n"
+        
+        if 'mutual_info' in results['mutual_info'] and results['mutual_info']['mutual_info'] is not None:
+            summary += f"  - MI={results['mutual_info']['mutual_info']:.4f}\n"
+        
+        if 'dcor' in results['distance_corr'] and results['distance_corr']['dcor'] is not None:
+            summary += f"  - dCor={results['distance_corr']['dcor']:.4f}\n"
+        
+        if 'granger_pvalue' in results['granger'] and results['granger']['granger_pvalue'] is not None:
+            summary += f"  - Granger p={results['granger']['granger_pvalue']:.4f}\n"
+
+        results['summary'] = summary
+        
+        return results
+
+    def find_optimal_indicator_combinations(self, max_indicators: int = 3, min_instances: int = 20) -> Dict:
+        """
+        Find combinations of indicators that best predict positive outcomes.
+
+        Args:
+            max_indicators: maximum number of indicators in a combination
+            min_instances: minimum number of instances required for a combination
+
+        Returns:
+            {
+              'combinations_top': List[Dict],
+              'interpretation': str
+            }
+        """
+        print(f"🎯 Finding optimal indicator combinations (max {max_indicators} indicators)...")
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
+        # Get all indicators
+        ind_query = "SELECT DISTINCT indicator_name FROM regime_confirming_indicators ORDER BY indicator_name"
+        ind_results = self.dao.db.execute(ind_query, fetch=True)
+        
+        if not ind_results or len(ind_results) < 2:
+            return {
+                'combinations_top': [],
+                'error': 'Not enough indicators to form combinations'
+            }
+
+        indicators = [row[0] for row in ind_results]
+        
+        print(f"   Testing combinations of {len(indicators)} indicators...")
+
+        # Test combinations of different sizes
+        all_combos = []
+        
+        for combo_size in range(1, min(max_indicators + 1, len(indicators) + 1)):
+            combos = itertools.combinations(indicators, combo_size)
+            
+            for combo in combos:
+                # Build query to find instances with all indicators in combo
+                conditions = []
+                for ind in combo:
+                    conditions.append(f"""
+                    EXISTS (
+                        SELECT 1 FROM regime_confirming_indicators rci
+                        WHERE rci.instance_id = ri.instance_id
+                        AND rci.indicator_name = '{ind}'
+                    )
+                    """)
+                
+                where_clause = " AND ".join(conditions)
+                
+                query = f"""
+                SELECT 
+                    COUNT(*) as instance_count,
+                    AVG(next_1d_return_pct) as avg_1d_return,
+                    AVG(next_3d_return_pct) as avg_3d_return,
+                    SUM(CASE WHEN next_1d_return_pct > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as win_rate_1d
+                FROM regime_instances ri
+                WHERE 
+                    next_1d_return_pct IS NOT NULL
+                    {timeframe_filter}
+                    AND {where_clause}
+                """
+                
+                try:
+                    result = self.dao.db.execute(query, fetch=True)
+                    if result and result[0][0] >= min_instances:
+                        instance_count, avg_1d, avg_3d, win_rate = result[0]
+                        
+                        all_combos.append({
+                            'indicators': list(combo),
+                            'instance_count': int(instance_count),
+                            'avg_1d_return': float(avg_1d) if avg_1d is not None else 0.0,
+                            'avg_3d_return': float(avg_3d) if avg_3d is not None else 0.0,
+                            'win_rate_1d': float(win_rate) if win_rate is not None else 0.0
+                        })
+                except Exception as e:
+                    pass
+
+        if not all_combos:
+            return {
+                'combinations_top': [],
+                'error': 'No combinations met minimum instance requirement'
+            }
+
+        # Sort by avg_3d_return and take top combinations
+        all_combos.sort(key=lambda x: x['avg_3d_return'], reverse=True)
+        top_combos = all_combos[:20]
+
+        interp = f"Found {len(all_combos)} viable indicator combinations. "
+        interp += f"Top combination: {top_combos[0]['indicators']} "
+        interp += f"(avg 3d return={top_combos[0]['avg_3d_return']:.2%}, win rate={top_combos[0]['win_rate_1d']:.2%})"
+
+        return {
+            'combinations_top': top_combos,
+            'interpretation': interp
+        }
+
+    # ---------------------- STRATEGY GENERATION -------------------------------
+    def generate_strategy_from_group(
         self,
-        instance_ids: List[str],
+        instance_ids: List[int],
         strategy_name: str
     ) -> Dict:
         """
@@ -653,15 +1593,27 @@ class RegimeStatisticalAnalyzer:
 
         # SQLite uses ? for parameters
         placeholders = ','.join(['?'] * len(instance_ids))
+        
+        # Exclude non-trading timeframes
+        timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
+        
         query = f"""
         SELECT 
-            ri.*,
-            GROUP_CONCAT(rci.indicator_name) as all_indicators,
-            GROUP_CONCAT(rcp.pattern_name) as all_patterns
+            ri.instance_id,
+            ri.dominant_structure,
+            ri.rsi_mean,
+            ri.adx_mean,
+            ri.volatility_mean,
+            ri.max_drawdown_pct,
+            ri.max_runup_pct,
+            ri.next_1d_return_pct,
+            GROUP_CONCAT(DISTINCT rci.indicator_name) as indicators,
+            GROUP_CONCAT(DISTINCT rcp.pattern_name) as patterns
         FROM regime_instances ri
         LEFT JOIN regime_confirming_indicators rci ON ri.instance_id = rci.instance_id
         LEFT JOIN regime_candlestick_patterns rcp ON ri.instance_id = rcp.instance_id
         WHERE ri.instance_id IN ({placeholders})
+        {timeframe_filter}
         GROUP BY ri.instance_id
         """
 
@@ -669,16 +1621,23 @@ class RegimeStatisticalAnalyzer:
         if not results:
             return {'error': 'No instances found'}
 
-        df = pd.DataFrame(results)
+        # Define column names matching the SELECT statement
+        column_names = [
+            'instance_id', 'dominant_structure', 'rsi_mean', 'adx_mean', 
+            'volatility_mean', 'max_drawdown_pct', 'max_runup_pct', 
+            'next_1d_return_pct', 'indicators', 'patterns'
+        ]
+        
+        df = self._results_to_dataframe(results, column_names)
 
         # Extract common characteristics
-        common_indicators = self._find_common_elements(df.get('all_indicators', pd.Series(dtype=object)))
-        common_patterns = self._find_common_elements(df.get('all_patterns', pd.Series(dtype=object)))
+        common_indicators = self._find_common_elements(df['indicators'])
+        common_patterns = self._find_common_elements(df['patterns'])
 
-        # Calculate average metrics defensively (use .get to avoid KeyError)
-        avg_rsi = float(df['rsi_mean'].mean()) if 'rsi_mean' in df.columns else 50.0
-        avg_adx = float(df['adx_mean'].mean()) if 'adx_mean' in df.columns else 20.0
-        avg_volatility = float(df['volatility_mean'].mean()) if 'volatility_mean' in df.columns else 1.0
+        # Calculate average metrics defensively
+        avg_rsi = float(df['rsi_mean'].mean()) if 'rsi_mean' in df.columns and df['rsi_mean'].notna().any() else 50.0
+        avg_adx = float(df['adx_mean'].mean()) if 'adx_mean' in df.columns and df['adx_mean'].notna().any() else 20.0
+        avg_volatility = float(df['volatility_mean'].mean()) if 'volatility_mean' in df.columns and df['volatility_mean'].notna().any() else 1.0
 
         # Determine entry conditions
         entry_conditions: List[str] = []
@@ -698,15 +1657,15 @@ class RegimeStatisticalAnalyzer:
             entry_conditions.append(f"{pattern} present")
 
         # Determine risk management
-        avg_drawdown = abs(df['max_drawdown_pct'].mean()) if 'max_drawdown_pct' in df.columns else 1.0
-        avg_runup = abs(df['max_runup_pct'].mean()) if 'max_runup_pct' in df.columns else 1.0
+        avg_drawdown = abs(df['max_drawdown_pct'].mean()) if 'max_drawdown_pct' in df.columns and df['max_drawdown_pct'].notna().any() else 1.0
+        avg_runup = abs(df['max_runup_pct'].mean()) if 'max_runup_pct' in df.columns and df['max_runup_pct'].notna().any() else 1.0
 
         stop_loss = avg_drawdown * 1.2  # 20% buffer
         take_profit = avg_runup * 0.8   # Conservative target
 
         # Calculate historical performance
-        win_rate = float((df['next_1d_return_pct'] > 0).mean() * 100) if 'next_1d_return_pct' in df.columns else 0.0
-        avg_return = float(df['next_1d_return_pct'].mean()) if 'next_1d_return_pct' in df.columns else 0.0
+        win_rate = float((df['next_1d_return_pct'] > 0).mean() * 100) if 'next_1d_return_pct' in df.columns and df['next_1d_return_pct'].notna().any() else 0.0
+        avg_return = float(df['next_1d_return_pct'].mean()) if 'next_1d_return_pct' in df.columns and df['next_1d_return_pct'].notna().any() else 0.0
 
         strategy = {
             'strategy_name': strategy_name,
@@ -767,14 +1726,17 @@ class RegimeStatisticalAnalyzer:
         Run complete statistical analysis suite with progress tracking.
         
         OPTIMIZED VERSION with progress tracking and better error handling.
+        Excludes 1m timeframe from all analyses.
         """
         print("\n" + "="*80)
         print("STATISTICAL ANALYSIS SUITE")
         print("="*80)
+        print(f"ℹ️  Excluding timeframes: {', '.join(EXCLUDED_TIMEFRAMES)}")
         overall_start = time.time()
         
         results = {
             'timestamp': pd.Timestamp.now(),
+            'excluded_timeframes': EXCLUDED_TIMEFRAMES,
             'analyses': {}
         }
         
@@ -820,7 +1782,7 @@ class RegimeStatisticalAnalyzer:
             results['optimal_combinations'] = self.find_optimal_indicator_combinations()
         except Exception as e:
             print(f"❌ Combination analysis failed: {e}")
-            results['optimal_combinations'] = []
+            results['optimal_combinations'] = {'combinations_top': [], 'error': str(e)}
         combo_time = time.time() - combo_start
         print(f"✅ Combination analysis complete ({combo_time:.1f}s)")
         
