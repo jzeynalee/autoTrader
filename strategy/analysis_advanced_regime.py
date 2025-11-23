@@ -1640,22 +1640,8 @@ class AdvancedRegimeDetectionSystem:
         df = swing_df.reset_index(drop=True).copy()
 
         # =========================================================================
-        # ADAPTIVE THRESHOLD CALCULATION (OPTIONAL ENHANCEMENT)
+        # REGIME-BASED SEGMENTATION
         # =========================================================================
-        
-                    
-        for i in range(len(df)):
-            # Existing feature-based triggers
-            triggered = vol_change[k] or slope_change[k] or struct_change[k]
-            
-            # NEW: Time-based trigger
-            if seg_start < k:
-                time_diff = df.index[k] - df.index[seg_start]
-                days_elapsed = time_diff.total_seconds() / 86400
-                
-                if days_elapsed >= max_days_per_instance:
-                    print(f"    Time-based split after {days_elapsed:.1f} days")
-                    triggered = True
         
         # Calculate adaptive max_instance_swings based on total swings
         total_swings = len(df)

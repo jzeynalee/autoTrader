@@ -44,7 +44,7 @@ from .regime_data_export_integration import (
 )
 from .regime_instance_engine import RegimeInstanceEngine
 from .regime_data_access_sqlite import RegimeDataAccess
-from .regime_statistical_analysis_sqlite_V2_deprecated import RegimeStatisticalAnalyzer
+from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
 
 # ============================================================================
 # NEW ENTRY FUNCTION: RUN STRATEGY DISCOVERY
@@ -247,7 +247,11 @@ def run_strategy_discovery(db_connector):
         for i, combo in enumerate(combinations[:5], 1):
             indicators_str = ' + '.join(combo['indicators'])
             print(f"  {i}. {indicators_str}")
-            print(f"     Win Rate: {combo['win_rate']:.1f}% | Avg Return: {combo['avg_return']:.2f}% | Samples: {combo['sample_size']}")
+            # Fixed: Use correct keys from find_optimal_indicator_combinations
+            win_rate = combo.get('win_rate_1d', 0) * 100  # Convert to percentage
+            avg_return = combo.get('avg_3d_return', 0) * 100  # Convert to percentage
+            sample_size = combo.get('instance_count', 0)
+            print(f"     Win Rate: {win_rate:.1f}% | Avg 3d Return: {avg_return:.2f}% | Samples: {sample_size}")
 
     # Store analysis results
     if db_connector:
