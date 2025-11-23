@@ -1555,21 +1555,29 @@ class RegimeStatisticalAnalyzer:
                             'win_rate_1d': float(win_rate) if win_rate is not None else 0.0
                         })
                 except Exception as e:
-                    pass
+                    # Log specific errors for debugging
+                    print(f"   ⚠️  Error testing combination {combo}: {e}")
+                    continue
 
         if not all_combos:
+            print("   ⚠️  No combinations met minimum instance requirement")
             return {
                 'combinations_top': [],
-                'error': 'No combinations met minimum instance requirement'
+                'error': 'No combinations met minimum instance requirement',
+                'interpretation': 'No valid indicator combinations found.'
             }
 
         # Sort by avg_3d_return and take top combinations
         all_combos.sort(key=lambda x: x['avg_3d_return'], reverse=True)
         top_combos = all_combos[:20]
 
-        interp = f"Found {len(all_combos)} viable indicator combinations. "
-        interp += f"Top combination: {top_combos[0]['indicators']} "
-        interp += f"(avg 3d return={top_combos[0]['avg_3d_return']:.2%}, win rate={top_combos[0]['win_rate_1d']:.2%})"
+        # Safe access to top combination
+        if top_combos:
+            interp = f"Found {len(all_combos)} viable indicator combinations. "
+            interp += f"Top combination: {top_combos[0]['indicators']} "
+            interp += f"(avg 3d return={top_combos[0]['avg_3d_return']:.2%}, win rate={top_combos[0]['win_rate_1d']:.2%})"
+        else:
+            interp = "No indicator combinations found."
 
         return {
             'combinations_top': top_combos,
