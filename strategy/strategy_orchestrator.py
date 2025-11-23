@@ -228,10 +228,14 @@ def run_strategy_discovery(db_connector):
                 result = analyzer.analyze_indicator_causality(indicator)
                 if 'error' not in result:
                     indicator_analysis[indicator] = result
-                    # UPDATED: V2 keys handling + V1 compatibility keys added in drop-in
-                    power = result.get('predictive_power', 0) # Added in drop-in V2
+                    # Extract nested values from result dictionaries
+                    power = result.get('predictive_power', 0)  # May not exist
                     rec = result.get('recommendation', 'N/A')
-                    mi = result.get('mutual_info', 0)
+                    
+                    # mutual_info is a dict, extract the actual MI value
+                    mi_dict = result.get('mutual_info', {})
+                    mi = mi_dict.get('mutual_info', 0) if isinstance(mi_dict, dict) else 0
+                    
                     print(f"  {indicator:20s} | Power: {power:5.1f} | MI: {mi:.3f} | {rec}")
             except Exception as e:
                 print(f"  ⚠️ Error analyzing {indicator}: {e}")

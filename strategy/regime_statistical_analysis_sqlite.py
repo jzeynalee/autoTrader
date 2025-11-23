@@ -676,7 +676,7 @@ class RegimeStatisticalAnalyzer:
         timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
         
         query = f"""
-        SELECT ri.start_datetime, ri.{outcome},
+        SELECT ri.start_time, ri.{outcome},
                (SELECT COUNT(*) 
                 FROM regime_confirming_indicators rci
                 WHERE rci.instance_id = ri.instance_id
@@ -685,7 +685,7 @@ class RegimeStatisticalAnalyzer:
         FROM regime_instances ri
         WHERE ri.{outcome} IS NOT NULL
         {timeframe_filter}
-        ORDER BY ri.start_datetime
+        ORDER BY ri.start_time
         """
         results = self.dao.db.execute(query, (indicator_name,), fetch=True)
 
@@ -697,7 +697,7 @@ class RegimeStatisticalAnalyzer:
                 'granger_pvalue': None
             }
 
-        column_names = ['start_datetime', outcome, 'has_indicator']
+        column_names = ['start_time', outcome, 'has_indicator']
         df = self._results_to_dataframe(results, column_names)
         
         df['has_indicator'] = df['has_indicator'].apply(lambda x: 1 if x > 0 else 0)
@@ -1077,11 +1077,11 @@ class RegimeStatisticalAnalyzer:
         
         # Get sequential regime instances ordered by time
         query = f"""
-        SELECT instance_id, dominant_structure, start_datetime
+        SELECT instance_id, dominant_structure, start_time
         FROM regime_instances
         WHERE 1=1
         {timeframe_filter}
-        ORDER BY start_datetime
+        ORDER BY start_time
         """
         results = self.dao.db.execute(query, fetch=True)
 
@@ -1092,7 +1092,7 @@ class RegimeStatisticalAnalyzer:
                 'error': 'Insufficient data'
             }
 
-        column_names = ['instance_id', 'dominant_structure', 'start_datetime']
+        column_names = ['instance_id', 'dominant_structure', 'start_time']
         df = self._results_to_dataframe(results, column_names)
 
         # Build transition pairs
@@ -1567,17 +1567,17 @@ class RegimeStatisticalAnalyzer:
                 'interpretation': 'No valid indicator combinations found.'
             }
 
-        # Change interpretation logic:
-        if top_combos:
-            interp = f"Found {len(all_combos)} viable indicator combinations. "
-            interp += f"Top combination: {top_combos[0]['indicators']} "
-            interp += f"(avg 3d return={top_combos[0]['avg_3d_return']:.2%}, win rate={top_combos[0]['win_rate_1d']:.2%})"
-        else:
-            interp = "No indicator combinations found."
-
         # Sort by avg_3d_return and take top combinations
-        all_combos.sort(key=lambda x: x['avg_3d_return'], reverse=True)
-        top_combos = all_combos[:20]
+        try:
+            all_combos.sort(key=lambda x: x.get('avg_3d_return', 0), reverse=True)
+            top_combos = all_combos[:20]
+        except Exception as e:
+            print(f"   ⚠️  Error sorting combinations: {e}")
+            return {
+                'combinations_top': [],
+                'error': f'Error sorting combinations: {e}',
+                'interpretation': 'Failed to rank combinations.'
+            }
 
         # Safe access to top combination
         if top_combos:
