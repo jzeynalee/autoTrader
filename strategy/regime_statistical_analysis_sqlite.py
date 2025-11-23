@@ -1567,6 +1567,14 @@ class RegimeStatisticalAnalyzer:
                 'interpretation': 'No valid indicator combinations found.'
             }
 
+        # Change interpretation logic:
+        if top_combos:
+            interp = f"Found {len(all_combos)} viable indicator combinations. "
+            interp += f"Top combination: {top_combos[0]['indicators']} "
+            interp += f"(avg 3d return={top_combos[0]['avg_3d_return']:.2%}, win rate={top_combos[0]['win_rate_1d']:.2%})"
+        else:
+            interp = "No indicator combinations found."
+
         # Sort by avg_3d_return and take top combinations
         all_combos.sort(key=lambda x: x['avg_3d_return'], reverse=True)
         top_combos = all_combos[:20]
