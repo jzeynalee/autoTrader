@@ -15,6 +15,9 @@ from ..models import Signal, TradeDirection
 import uuid
 import time
 
+from ..logger import setup_logging
+logger = setup_logging()
+
 try:
     from .discovery_mapping import (
         map_indicator_state,
@@ -30,7 +33,7 @@ try:
     )
     MAPPER_AVAILABLE = True
 except ImportError:
-    print("Warning: discovery_mapping.py not found. System cannot function without it.")
+    logger.error("Warning: discovery_mapping.py not found. System cannot function without it.")
     MAPPER_AVAILABLE = False
     exit(1)
 
@@ -52,18 +55,18 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 structure_aligned_counts += 1
                 alignment_scores.append(strategy.get('structure_alignment_score', 0))
         
-        print(f"\n🎯 PHASE 5 STRATEGY DISCOVERY SUMMARY")
-        print(f"   Total Strategies: {len(strategies)}")
-        print(f"   Confluence Strategies: {confluence_counts}")
-        print(f"   Structure-Aligned Strategies: {structure_aligned_counts}")
+        logger.info(f"\n🎯 PHASE 5 STRATEGY DISCOVERY SUMMARY")
+        logger.info(f"   Total Strategies: {len(strategies)}")
+        logger.info(f"   Confluence Strategies: {confluence_counts}")
+        logger.info(f"   Structure-Aligned Strategies: {structure_aligned_counts}")
         
         if confluence_scores:
             avg_confluence = sum(confluence_scores) / len(confluence_scores)
-            print(f"   Average Confluence Score: {avg_confluence:.3f}")
+            logger.info(f"   Average Confluence Score: {avg_confluence:.3f}")
         
         if alignment_scores:
             avg_alignment = sum(alignment_scores) / len(alignment_scores)
-            print(f"   Average Alignment Score: {avg_alignment:.3f}")
+            logger.info(f"   Average Alignment Score: {avg_alignment:.3f}")
         
         # Print performance by strategy class
         class_performance = {}
@@ -75,11 +78,11 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 class_performance[strategy_class] = []
             class_performance[strategy_class].append(accuracy)
         
-        print(f"\n📊 AVERAGE PERFORMANCE BY STRATEGY CLASS:")
+        logger.info(f"\n📊 AVERAGE PERFORMANCE BY STRATEGY CLASS:")
         for strategy_class, accuracies in class_performance.items():
             if accuracies:
                 avg_accuracy = sum(accuracies) / len(accuracies)
-                print(f"   {strategy_class}: {avg_accuracy:.2%} ({len(accuracies)} strategies)")
+                logger.info(f"   {strategy_class}: {avg_accuracy:.2%} ({len(accuracies)} strategies)")
 
     def _calculate_strategy_quality_score(self, strategy, ltf_df, final_mask):
         """
@@ -660,7 +663,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Combines the best of price structure with traditional indicators
         Receives dataframes as arguments to prevent redundant loads.
         """
-        print(f"  Discovering Mode E (Hybrid) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode E (Hybrid) strategies for {group_name}...")
         
         if htf_df is None:
             return []
@@ -808,7 +811,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Mode F: Structure Breakout Strategies
         FIXED: Safe index alignment + relaxed thresholds + better pattern detection
         """
-        print(f"  Discovering Mode F (Structure Breakout) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode F (Structure Breakout) strategies for {group_name}...")
         
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -965,7 +968,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         """
         Mode G: Momentum Divergence (FIXED)
         """
-        print(f"  Discovering Mode G (Momentum Divergence) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode G (Momentum Divergence) strategies for {group_name}...")
         
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -1094,7 +1097,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         """
         Mode H: Trend-Context Strategy (FIXED)
         """
-        print(f"  Discovering Mode H (Trend-Context) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode H (Trend-Context) strategies for {group_name}...")
         
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -1111,7 +1114,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             current_trend = trend_analysis['overall_trend']['primary_trend']
             trend_strength = trend_analysis['overall_trend']['trend_strength']
         except Exception as e:
-            print(f"  ⚠️  Trend analysis failed: {e}")
+            logger.info(f"  ⚠️  Trend analysis failed: {e}")
             return strategies
         
         # Skip weak trends
@@ -1276,7 +1279,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         UNIVERSAL TEMPLATE for Modes I, K, M, N
         Just pass different setups_config for each mode
         """
-        print(f"  Discovering Mode {mode_name} strategies for {group_name}...")
+        logger.info(f"  Discovering Mode {mode_name} strategies for {group_name}...")
         
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -1368,7 +1371,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Focuses exclusively on high-scoring pullback setups with trend confirmation
         Receives dataframes as arguments to prevent redundant loads.
         """
-        print(f"  Discovering Mode I (High-Quality Pullback) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode I (High-Quality Pullback) strategies for {group_name}...")
         
         if htf_df is None:
             return []
@@ -1510,7 +1513,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         regime was active.
         Receives dataframes as arguments to prevent redundant loads.
         """
-        print(f"  Discovering Mode J (Regime-Optimized) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode J (Regime-Optimized) strategies for {group_name}...")
         
         try:
             if htf_df is None:
@@ -1521,7 +1524,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
             
             if 'historical_regime' not in ltf_df.columns:
-                print(f"  ⚠️  Mode J SKIPPED: 'historical_regime' column not found in LFT dataframe.")
+                logger.info(f"  ⚠️  Mode J SKIPPED: 'historical_regime' column not found in LFT dataframe.")
                 return []
             
             strategies = []
@@ -1630,7 +1633,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
 
         except Exception as e:
             import traceback
-            print(f"❌ [discover_mtf_strategies_mode_j] TRACEBACK: {traceback.format_exc()}")
+            logger.info(f"❌ [discover_mtf_strategies_mode_j] TRACEBACK: {traceback.format_exc()}")
             return []
 
     #_________________________________________
@@ -1777,7 +1780,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Mode K: Adaptive Multi-Regime Strategy Discovery
         Strategies that work across multiple market regimes with adaptive parameters
         """
-        print(f"  Discovering Mode K (Adaptive Multi-Regime) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode K (Adaptive Multi-Regime) strategies for {group_name}...")
         
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -1890,7 +1893,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
     def discover_mtf_strategies_mode_l(self, group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf):
         """Mode L (Structure-Aligned) strategies"""
-        print(f"  Discovering Mode L (Structure-Aligned) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode L (Structure-Aligned) strategies for {group_name}...")
 
         if htf_df is None:
             return []
@@ -2258,7 +2261,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Mode M: Volatility-Adaptive MTF Strategies
         Strategies optimized for specific volatility regimes
         """
-        print(f"  Discovering Mode M (Volatility-Adaptive) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode M (Volatility-Adaptive) strategies for {group_name}...")
         
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -2528,7 +2531,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Identifies momentum flowing from HTF → TTF → LTF with confirmation.
         Improved: defensive, fallback heuristics, per-setup thresholds, diagnostics.
         """
-        print(f"  Discovering Mode N (Momentum Cascade) strategies for {group_name}...")
+        logger.info(f"  Discovering Mode N (Momentum Cascade) strategies for {group_name}...")
 
         if htf_df is None or ttf_df is None or ltf_df is None:
             return []
@@ -2537,15 +2540,15 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         try:
             htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
         except Exception as e:
-            print(f"  ⚠️  Mode N: HTF pattern detection failed: {e}")
+            logger.info(f"  ⚠️  Mode N: HTF pattern detection failed: {e}")
         try:
             ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
         except Exception as e:
-            print(f"  ⚠️  Mode N: TTF pattern detection failed: {e}")
+            logger.info(f"  ⚠️  Mode N: TTF pattern detection failed: {e}")
         try:
             ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
         except Exception as e:
-            print(f"  ⚠️  Mode N: LTF pattern detection failed: {e}")
+            logger.info(f"  ⚠️  Mode N: LTF pattern detection failed: {e}")
 
         strategies = []
 
@@ -2557,7 +2560,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         try:
             momentum_cascade = self._analyze_momentum_cascade(htf_df, ttf_df, ltf_df) or {}
         except Exception as e:
-            print(f"  ⚠️  Mode N: momentum cascade analysis failed: {e}")
+            logger.info(f"  ⚠️  Mode N: momentum cascade analysis failed: {e}")
             momentum_cascade = {}
 
         current_flow = momentum_cascade.get('primary_flow_direction', None)
@@ -2764,12 +2767,12 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             except Exception as e:
                 # Prevent a single broken setup from crashing the whole discovery
                 import traceback
-                print(f"  ⚠️  Mode N: error processing setup '{setup_name}': {e}\n{traceback.format_exc()}")
+                logger.info(f"  ⚠️  Mode N: error processing setup '{setup_name}': {e}\n{traceback.format_exc()}")
                 continue
 
         # Diagnostic: if no strategies found, print something helpful
         if len(strategies) == 0:
-            print(f"  ⚠️  MODE N produced 0 strategies for {group_name}.")
+            logger.info(f"  ⚠️  MODE N produced 0 strategies for {group_name}.")
             # If helper exists, call it to show missing pattern coverage
             if hasattr(self, "_debug_pattern_availability"):
                 critical = ['higher_highs','lower_lows','trend_structure','momentum_continuation',
@@ -2790,7 +2793,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Mode COMBO: Dynamically tests combinations of top-performing indicators
         Finds best 2-3 indicator combinations per timeframe
         """
-        print(f"  Discovering Mode COMBO (Dynamic Combinations) for {group_name}...")
+        logger.info(f"  Discovering Mode COMBO (Dynamic Combinations) for {group_name}...")
         
         if htf_df is None:
             return []
@@ -2926,7 +2929,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         Receives dataframes as arguments to prevent redundant loads.
         """
         try:
-            print(f"  Discovering Mode Confluence (Flexible) strategies for {group_name}...")
+            logger.info(f"  Discovering Mode Confluence (Flexible) strategies for {group_name}...")
                 
             # --- START OF FIX (Q4) ---
             # Remove redundant call to get_mtf_dataframes.
@@ -2940,7 +2943,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             
             # --- CRITICAL FIX (Same as Mode J) ---
             if 'historical_regime' not in ltf_df.columns:
-                print(f"  ⚠️  Mode Confluence SKIPPED: 'historical_regime' column not found.")
+                logger.info(f"  ⚠️  Mode Confluence SKIPPED: 'historical_regime' column not found.")
                 return []
             # --- END FIX ---
             
@@ -3082,7 +3085,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             return strategies    
         except Exception as e:
             import traceback
-            print(f"❌ [discover_mtf_strategies_mode_confluence] TRACEBACK: {traceback.format_exc()}")
+            logger.info(f"❌ [discover_mtf_strategies_mode_confluence] TRACEBACK: {traceback.format_exc()}")
             return []
         
     def _filter_and_rank_strategies(self, strategies):
@@ -3113,7 +3116,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             # Sort by performance score
             filtered.sort(key=lambda x: x.get('performance_score', 0), reverse=True)
             
-            print(f"  Kept {len(filtered)}/{len(strategies)} strategies after filtering")
+            logger.info(f"  Kept {len(filtered)}/{len(strategies)} strategies after filtering")
             
             return filtered
 
@@ -3145,7 +3148,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         
         sorted_groups = sorted(TIMEFRAME_GROUPS.keys(), key=get_group_order)
         
-        print(f"Analysis order: {' -> '.join(sorted_groups)}")
+        logger.info(f"Analysis order: {' -> '.join(sorted_groups)}")
 
         pair = "btc_usdt" # Define the pair once for the entire run
         
@@ -3171,12 +3174,12 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(pair, htf_tf, ttf_tf, ltf_tf)
 
                 if htf_df is None or ttf_df is None or ltf_df is None:
-                    print(f"  ⚠️  Skipping {group_name}: Could not load all dataframes.")
+                    logger.info(f"  ⚠️  Skipping {group_name}: Could not load all dataframes.")
                     continue
 
             except Exception:
                 htf_df = ttf_df = ltf_df = None
-                print(f"  ⚠️  Skipping {group_name}: Error during dataframe loading.")
+                logger.info(f"  ⚠️  Skipping {group_name}: Error during dataframe loading.")
                 continue
 
             # run discovery modes sequentially (HTF-first is guaranteed because htf_df computed above)
@@ -3213,8 +3216,8 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     
                     strategy_results[mode_label] = res if res is not None else []
                 except Exception as e:
-                    print(f"  ! Mode {mode_label} failed for {group_name}: {e}")
-                    #print(f"  ! Mode {mode_label} failed for {group_name}: {e}\n{traceback.format_exc()}") # Added full traceback
+                    logger.info(f"  ! Mode {mode_label} failed for {group_name}: {e}")
+                    #logger.info(f"  ! Mode {mode_label} failed for {group_name}: {e}\n{traceback.format_exc()}") # Added full traceback
                     strategy_results[mode_label] = []
 
                 '''try:
@@ -3223,8 +3226,8 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     res = mode_fn(group_name, pair, htf_df, ttf_df, ltf_df, htf_tf, ttf_tf, ltf_tf)
                     strategy_results[mode_label] = res if res is not None else []
                 except Exception as e:
-                    print(f"  ! Mode {mode_label} failed for {group_name}: {e}")
-                    #print(f"  ! Mode {mode_label} failed for {group_name}: {e}\n{traceback.format_exc()}") # Added full traceback
+                    logger.info(f"  ! Mode {mode_label} failed for {group_name}: {e}")
+                    #logger.info(f"  ! Mode {mode_label} failed for {group_name}: {e}\n{traceback.format_exc()}") # Added full traceback
                     strategy_results[mode_label] = []'''
 
             # Combine all results
@@ -3238,9 +3241,9 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             all_mtf_strategies.extend(group_strategies)
 
             # Print detailed breakdown
-            print(f"  ✓ {group_name}: ", end="")
+            logger.info(f"  ✓ {group_name}: ", end="")
             for mode, count in strategy_counts.items():
-                print(f"{count}{mode} ", end="")
+                logger.info(f"{count}{mode} ", end="")
             print()
 
         
@@ -3258,7 +3261,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
         # Generate comprehensive strategy analysis
         self._analyze_phase5_strategy_breakdown(all_mtf_strategies)
 
-        print(f"\n🎯 DISCOVERY COMPLETE: {len(all_mtf_strategies)} strategies found")
+        logger.info(f"\n🎯 DISCOVERY COMPLETE: {len(all_mtf_strategies)} strategies found")
         
         # Generate report
         self.generate_strategy_report()
@@ -3309,7 +3312,7 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
     
     def _debug_pattern_availability(self, df, pattern_list, pair_tf):
         """Debug helper: Check which patterns exist and have non-zero values"""
-        print(f"\n  🔍 DEBUG: Checking pattern availability for {pair_tf}")
+        logger.info(f"\n  🔍 DEBUG: Checking pattern availability for {pair_tf}")
         
         for pattern in pattern_list:
             if pattern in df.columns:
@@ -3320,20 +3323,20 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                     bullish = (states == 'bullish').sum()
                     bearish = (states == 'bearish').sum()
                 else:
-                    print(f"    ✗ {pattern}: EXISTS but NOT MAPPED!")
+                    logger.info(f"    ✗ {pattern}: EXISTS but NOT MAPPED!")
             else:
-                print(f"    ✗ {pattern}: NOT FOUND in DataFrame!")
+                logger.info(f"    ✗ {pattern}: NOT FOUND in DataFrame!")
 
 
     def diagnose_mode_issues(self, group_name, pair, htf_df, ttf_df, ltf_df):
         """
         Diagnostic tool to understand why modes aren't finding strategies
         """
-        print(f"\n🔍 DIAGNOSING MODE ISSUES FOR {group_name}")
+        logger.info(f"\n🔍 DIAGNOSING MODE ISSUES FOR {group_name}")
         print("="*60)
         
         for tf_name, df in [('HTF', htf_df), ('TTF', ttf_df), ('LTF', ltf_df)]:
-            print(f"\n{tf_name} ({len(df)} bars):")
+            logger.info(f"\n{tf_name} ({len(df)} bars):")
             
             # Check critical patterns
             critical_patterns = [
@@ -3351,25 +3354,25 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
                 if pattern in df.columns:
                     count = (df[pattern] != 0).sum() if df[pattern].dtype != 'object' else len(df[pattern].unique())
                     if count > 0:
-                        print(f"  ✅ {pattern}: {count} occurrences")
+                        logger.info(f"  ✅ {pattern}: {count} occurrences")
                         found += 1
                     else:
-                        print(f"  ⚠️  {pattern}: EXISTS but EMPTY")
+                        logger.info(f"  ⚠️  {pattern}: EXISTS but EMPTY")
                         empty += 1
                 else:
-                    print(f"  ❌ {pattern}: MISSING")
+                    logger.info(f"  ❌ {pattern}: MISSING")
                     missing += 1
             
-            print(f"\n  Summary: {found} working, {empty} empty, {missing} missing")
+            logger.info(f"\n  Summary: {found} working, {empty} empty, {missing} missing")
             
             # Check index alignment
-            print(f"  Index range: {df.index[0]} to {df.index[-1]}")
-            print(f"  Price range: ${df['close'].min():.2f} to ${df['close'].max():.2f}")
+            logger.info(f"  Index range: {df.index[0]} to {df.index[-1]}")
+            logger.info(f"  Price range: ${df['close'].min():.2f} to ${df['close'].max():.2f}")
             
             # Check for NaN issues
             nan_cols = df.columns[df.isna().any()].tolist()
             if nan_cols:
-                print(f"  ⚠️  Columns with NaN: {', '.join(nan_cols[:5])}")
+                logger.info(f"  ⚠️  Columns with NaN: {', '.join(nan_cols[:5])}")
 
     # ============================================================================
     # HELPER FUNCTIONS (Add to PatternsMixin or DiscoveryModesMixin)

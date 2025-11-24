@@ -1,6 +1,9 @@
+import os
+# FIX: Prevent KMeans memory leak on Windows
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import pandas as pd
 import numpy as np
-import os
 import time
 from collections import defaultdict
 import json
@@ -10,8 +13,6 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
 from ..logger import setup_logging
-
-# Initialize global logger (can be reconfigured)
 logger = setup_logging()
 
 # Note: We keep the relative imports here, assuming execution via autoTrader.main
@@ -30,8 +31,8 @@ try:
     )
     MAPPER_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: discovery_mapping.py import failed: {e}")
-    print("FATAL: Cannot load required mapping file. System cannot proceed.")
+    logger.critical(f"Warning: discovery_mapping.py import failed: {e}")
+    logger.critical("FATAL: Cannot load required mapping file. System cannot proceed.")
     MAPPER_AVAILABLE = False
 
 from .analysis_trend import TrendAnalysisSystem
@@ -61,7 +62,7 @@ def run_strategy_discovery(db_connector):
         db_connector: An instantiated DatabaseConnector object.
     """
     if not MAPPER_AVAILABLE:
-        print("❌ ERROR: Discovery mapping failed to load. Aborting strategy pipeline.")
+        logger.error("❌ ERROR: Discovery mapping failed to load. Aborting strategy pipeline.")
         return
 
     start_time = time.time()
@@ -70,9 +71,9 @@ def run_strategy_discovery(db_connector):
     # ============================================================================
     # PHASE 1: INITIALIZATION & DATA LOADING (FROM DB)
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 1: STRATEGY PIPELINE INITIALIZATION (Loading from DB)")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 1: STRATEGY PIPELINE INITIALIZATION (Loading from DB)")
+    logger.info("="*80)
     
     # 1. Instantiate Core System
     system = StrategyDiscoverySystem(
@@ -90,13 +91,13 @@ def run_strategy_discovery(db_connector):
         system.regime_detector   = AdvancedRegimeDetectionSystem()
         system.confluence_scorer = ConfluenceScoringSystem()
     except Exception as e:
-        print(f"❌ ERROR: Failed to instantiate Analysis Systems: {e}")
+        logger.error(f"❌ ERROR: Failed to instantiate Analysis Systems: {e}")
         return
     
 
     # 3. Load Data from DB
     if not system.load_data_from_db(): 
-        print("❌ Failed to load data from DB. Aborting.")
+        logger.error("❌ Failed to load data from DB. Aborting.")
         return
     
     # Optimize memory usage once at start
@@ -117,14 +118,14 @@ def run_strategy_discovery(db_connector):
         df = system.all_dataframes[pair_tf]
         system.all_dataframes[pair_tf] = system.enhanced_market_regime_detection(df)
     
-    print(f"✅ Loaded {len(system.all_dataframes)} datasets")
+    logger.info(f"✅ Loaded {len(system.all_dataframes)} datasets")
 
     # ============================================================================
     # PHASE 1.5: REGIME STRATEGY PLAYBOOK DISCOVERY (THE BRAIN)
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 1.5: REGIME INSTANCE DISCOVERY & STATISTICAL ANALYSIS")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 1.5: REGIME INSTANCE DISCOVERY & STATISTICAL ANALYSIS")
+    logger.info("="*80)
 
     # 1. Initialize Components
     instance_engine = RegimeInstanceEngine(
@@ -149,10 +150,10 @@ def run_strategy_discovery(db_connector):
             regime_dao.store_regime_instance(instance)
         total_instances += len(instances)
 
-    print(f"\n✅ Discovered & Stored: {total_instances} regime instances")
+    logger.info(f"\n✅ Discovered & Stored: {total_instances} regime instances")
 
     # 4. Run Statistical Analysis (The Math)
-    print("\n🔬 Running Statistical Analysis on Indicators...")
+    logger.info("\n🔬 Running Statistical Analysis on Indicators...")
     top_indicators = ['rsi', 'macd_hist', 'ppo', 'adx', 'bb_width', 'obv', 'volume_zscore', 'atr_percent']
     
     indicator_analysis = {}
@@ -162,12 +163,12 @@ def run_strategy_discovery(db_connector):
             result = analyzer.analyze_indicator_causality(indicator)
             if 'error' not in result:
                 indicator_analysis[indicator] = result
-                print(f"  Analyzed {indicator}")
+                logger.info(f"  Analyzed {indicator}")
         except Exception as e:
-            print(f"  ⚠️ Error analyzing {indicator}: {e}")
+            logger.error(f"  ⚠️ Error analyzing {indicator}: {e}")
 
     # 5. Generate Strategy Playbook (The Rules)
-    print("\n📘 Generating Regime Strategy Playbook...")
+    logger.info("\n📘 Generating Regime Strategy Playbook...")
     try:
         # This uses the analyzed stats to filter valid indicators for each regime
         playbook = strategy_discoverer.discover_strategies()
@@ -196,38 +197,38 @@ def run_strategy_discovery(db_connector):
             system.strategy_pool[strat_entry['id']] = strat_entry
             playbook_strategies_count += 1
             
-        print(f"✅ Generated {playbook_strategies_count} strategies from Regime Playbook")
+        logger.info(f"✅ Generated {playbook_strategies_count} strategies from Regime Playbook")
         
     except Exception as e:
-        print(f"⚠️ Failed to generate playbook: {e}")
+        logger.error(f"⚠️ Failed to generate playbook: {e}")
         import traceback
         traceback.print_exc()
 
     # ============================================================================
     # PHASE 2: STRATEGY DISCOVERY (EXECUTION MODES)
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 2: STRATEGY DISCOVERY (MODES)")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 2: STRATEGY DISCOVERY (MODES)")
+    logger.info("="*80)
     
     # Single-timeframe strategies
-    print("\n📊 Discovering single-timeframe strategies...")
+    logger.info("\n📊 Discovering single-timeframe strategies...")
     system.discover_multi_signal_strategies()
     
     # Multi-timeframe strategies
     # Note: Modes A-H have been deprecated. This calls surviving modes (J, K, L, M, N, Confluence)
-    print("\n🔄 Discovering multi-timeframe strategies...")
+    logger.info("\n🔄 Discovering multi-timeframe strategies...")
     mtf_start_id = len(system.strategy_pool)
     system.discover_mtf_strategies()
     mtf_count = len(system.strategy_pool) - mtf_start_id
-    print(f"✅ Found {mtf_count} MTF strategies")
+    logger.info(f"✅ Found {mtf_count} MTF strategies")
     
     # ============================================================================
     # PHASE 3: BACKTESTING (CONSOLIDATED & CLEANED)
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 3: STRATEGY BACKTESTING")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 3: STRATEGY BACKTESTING")
+    logger.info("="*80)
     
     for strategy_key in list(system.strategy_pool.keys()):
         strategy = system.strategy_pool[strategy_key]
@@ -262,31 +263,31 @@ def run_strategy_discovery(db_connector):
             if "Insufficient data" not in str(e):
                 print(f"⚠️ Error backtesting {strategy_key} ({strategy_type}): {e}")
 
-    print(f"✅ Backtested {len(system.strategy_pool)} strategies")
+    logger.info(f"✅ Backtested {len(system.strategy_pool)} strategies")
 
     # ============================================================================
     # PHASE 4: ADVANCED ANALYTICS
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 4: ADVANCED ANALYTICS")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 4: ADVANCED ANALYTICS")
+    logger.info("="*80)
     
     # Strategy correlation analysis
-    print("\n📈 Building strategy correlation matrix...")
+    logger.info("\n📈 Building strategy correlation matrix...")
     correlation_results = system.build_strategy_correlation_matrix()
     if correlation_results and 'diversified_portfolios' in correlation_results:
-        print(f"   Found {len(correlation_results['diversified_portfolios'])} diversified portfolios")
+        logger.info(f"   Found {len(correlation_results['diversified_portfolios'])} diversified portfolios")
     
     # Pattern effectiveness analysis
-    print("\n🎯 Analyzing pattern effectiveness...")
+    logger.info("\n🎯 Analyzing pattern effectiveness...")
     system.generate_pattern_effectiveness_report()
     
     # ============================================================================
     # PHASE 5: SL/TP CALCULATION (FOR LIVE TRADING)
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 5: CALCULATING SL/TP FOR LIVE TRADING")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 5: CALCULATING SL/TP FOR LIVE TRADING")
+    logger.info("="*80)
     
     # Only calculate SL/TP for top-performing strategies
     # Look at both backtest win rate and discovery accuracy
@@ -315,20 +316,20 @@ def run_strategy_discovery(db_connector):
             system.strategy_pool[strat_id] = enhanced_strategy
             enhanced_count += 1
     
-    print(f"✅ Enhanced {enhanced_count}/{len(sorted_strats)} top strategies with SL/TP")
+    logger.info(f"✅ Enhanced {enhanced_count}/{len(sorted_strats)} top strategies with SL/TP")
     
     # ============================================================================
     # PHASE 6: REPORTING & EXPORT
     # ============================================================================
-    print("\n" + "="*80)
-    print("PHASE 6: GENERATING REPORTS")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("PHASE 6: GENERATING REPORTS")
+    logger.info("="*80)
     
     # Console reports
     system.print_strategy_report(top_n=20)
     
     # File exports
-    print("\n📁 Exporting results...")
+    logger.info("\n📁 Exporting results...")
     try:
         system.save_strategies_to_file('strategy_pool.json')
         export_files.append('strategy_pool.json')
@@ -339,33 +340,33 @@ def run_strategy_discovery(db_connector):
         system.export_mtf_strategies_csv('mtf_strategies_with_sltp.csv')
         export_files.append('mtf_strategies_with_sltp.csv')
         
-        print(f"✅ Exported {len(export_files)} files")
+        logger.info(f"✅ Exported {len(export_files)} files")
         
     except Exception as e:
-        print(f"⚠️ Export error: {e}")
+        logger.error(f"⚠️ Export error: {e}")
     
     # ============================================================================
     # PHASE 7: FINAL SUMMARY
     # ============================================================================
-    print("\n" + "="*80)
-    print("STRATEGY DISCOVERY COMPLETE")
-    print("="*80)
+    logger.info("\n" + "="*80)
+    logger.info("STRATEGY DISCOVERY COMPLETE")
+    logger.info("="*80)
     
     # Strategy breakdown
     playbook_count = len([s for s in system.strategy_pool.values() if s.get('type') == 'regime_playbook'])
     mtf_count = len([s for s in system.strategy_pool.values() if s.get('type', '').startswith('mtf_')])
     
-    print(f"\n📊 Strategy Breakdown:")
-    print(f"   • Regime Playbook: {playbook_count}")
-    print(f"   • Multi-Timeframe: {mtf_count}")
-    print(f"   • Total: {len(system.strategy_pool)}")
+    logger.info(f"\n📊 Strategy Breakdown:")
+    logger.info(f"   • Regime Playbook: {playbook_count}")
+    logger.info(f"   • Multi-Timeframe: {mtf_count}")
+    logger.info(f"   • Total: {len(system.strategy_pool)}")
     
     # Quality Metrics
     high_quality = len([s for s in system.strategy_pool.values() 
                        if s.get('backtest_win_rate', 0) >= 0.60])
     
-    print(f"\n🎯 Quality Metrics:")
-    print(f"   • High Win Rate (≥60%): {high_quality}")
+    logger.info(f"\n🎯 Quality Metrics:")
+    logger.info(f"   • High Win Rate (≥60%): {high_quality}")
     
     # Performance metrics
     end_time = time.time()
@@ -374,5 +375,5 @@ def run_strategy_discovery(db_connector):
     minutes = int((total_time % 3600) // 60)
     seconds = int(total_time % 60)
     
-    print(f"\n⏱️  Execution Time: {hours:02d}:{minutes:02d}:{seconds:02d}")
-    print("\n✅ Strategy Discovery Complete!")
+    logger.info(f"\n⏱️  Execution Time: {hours:02d}:{minutes:02d}:{seconds:02d}")
+    logger.info("\n✅ Strategy Discovery Complete!")

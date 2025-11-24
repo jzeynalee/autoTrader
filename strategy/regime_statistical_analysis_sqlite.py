@@ -1703,7 +1703,7 @@ class RegimeStatisticalAnalyzer:
         logger.info(f"✅ Combination analysis complete ({combo_time:.1f}s)")
         
         overall_time = time.time() - overall_start
-        print(f"\n" + "="*80)
+        logger.info(f"\n" + "="*80)
         logger.info(f"✅ FULL ANALYSIS COMPLETE IN {overall_time:.1f}s")
         logger.info("="*80)
         logger.info(f"   Indicators analyzed: {len(results['analyses'])}")

@@ -26,19 +26,21 @@ Architecture:
             -> Finds all features that *confirm* the swing's regime
         -> Builds Strategy Repository (dict)
 """
+import os
+# FIX: Prevent KMeans memory leak on Windows
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Set, Optional
 import json
 
-try:
-    from .analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
-    from .regime_statistical_analysis_sqlite_V2_deprecated import RegimeStatisticalAnalyzer
-except ImportError:
-    print("Error: Could not import 'AdvancedRegimeDetectionSystem'.")
-    print("Please ensure 'analysis_advanced_regime.py' is in the same Python path.")
-    class AdvancedRegimeDetectionSystem: pass
-    class RegimeState: pass
+from ..logger import setup_logging
+logger = setup_logging()
+
+from .analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
+from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
+
 
 # ============================================================================
 # SECTION 1: INDICATOR & PATTERN LOGIC
@@ -1378,7 +1380,7 @@ class RegimeStrategyDiscovery:
         swing_df = self.regime_system.registry.to_dataframe()
         
         if 'hmm_regime' not in swing_df.columns:
-            print("  ⚠️  'hmm_regime' column not found. Run HMM first.")
+            logger.info("  ⚠️  'hmm_regime' column not found. Run HMM first.")
             return {}
         
         # Prefer instance-level key if available
@@ -1540,12 +1542,12 @@ class RegimeStrategyDiscovery:
     def print_repository_summary(self):
         """Prints a human-readable summary of the discovered playbook."""
         if not self.strategy_repository:
-            print("Repository is empty. Run discover_strategies() first.")
+            logger.info("Repository is empty. Run discover_strategies() first.")
             return
             
-        print("\n" + "="*80)
-        print("STRATEGY REPOSITORY SUMMARY (PLAYBOOK)")
-        print("="*80)
+        logger.info("\n" + "="*80)
+        logger.info("STRATEGY REPOSITORY SUMMARY (PLAYBOOK)")
+        logger.info("="*80)
         
         for regime_id, data in self.strategy_repository.items():
             # Handle None values safely
@@ -1559,26 +1561,26 @@ class RegimeStrategyDiscovery:
             if display_name is None:
                 display_name = f"Regime {regime_id}"
             
-            print(f"\n--- REGIME {regime_id}: {display_name.upper()} ---")
-            print(f"    Type: {trend} trend, {volatility} volatility")
+            logger.info(f"\n--- REGIME {regime_id}: {display_name.upper()} ---")
+            logger.info(f"    Type: {trend} trend, {volatility} volatility")
             
-            print("\n    CONFIRMING INDICATORS:")
+            logger.info("\n    CONFIRMING INDICATORS:")
             indicators = data.get('confirming_indicators', [])
             if indicators:
                 for ind in indicators:
-                    print(f"      • {ind}")
+                    logger.info(f"      • {ind}")
             else:
-                print("      (None found)")
+                logger.info("      (None found)")
                 
-            print("\n    STRATEGY & PRICE ACTION PATTERNS:")
+            logger.info("\n    STRATEGY & PRICE ACTION PATTERNS:")
             patterns = data.get('strategy_patterns', [])
             if patterns:
                 for pat in patterns:
-                    print(f"      • {pat}")
+                    logger.info(f"      • {pat}")
             else:
-                print("      (None found)")
+                logger.info("      (None found)")
         
-        print("\n" + "="*80)
+        logger.info("\n" + "="*80)
 
 
 # ============================================================================
@@ -1587,7 +1589,7 @@ class RegimeStrategyDiscovery:
 
 def create_mock_indicator_data(length: int) -> pd.DataFrame:
     """Creates mock DataFrame with all required indicators."""
-    print(f"  Generating {length} bars of mock indicator data...")
+    logger.info(f"  Generating {length} bars of mock indicator data...")
     dates = pd.date_range(start='2023-01-01', periods=length, freq='h')
     df = pd.DataFrame(index=dates)
     
@@ -1629,34 +1631,34 @@ if __name__ == "__main__":
         SKLEARN_AVAILABLE = False
 
     if not HMM_AVAILABLE or not XGB_AVAILABLE or not SKLEARN_AVAILABLE:
-        print("\n" + "="*80)
-        print("WARNING: Mock example requires 'hmmlearn', 'xgboost', and 'scikit-learn'.")
-        print("Please install them to run the full example.")
-        print("pip install hmmlearn xgboost scikit-learn")
-        print("="*80)
+        logger.info("\n" + "="*80)
+        logger.info("WARNING: Mock example requires 'hmmlearn', 'xgboost', and 'scikit-learn'.")
+        logger.info("Please install them to run the full example.")
+        logger.info("pip install hmmlearn xgboost scikit-learn")
+        logger.info("="*80)
     else:
-        print("Running Regime-Based Strategy Discovery Example...")
-        print("="*80)
+        logger.info("Running Regime-Based Strategy Discovery Example...")
+        logger.info("="*80)
         
         mock_df = create_mock_indicator_data(length=1000)
 
-        print("\n[PHASE 1: Running Advanced Regime Detection]")
+        logger.info("\n[PHASE 1: Running Advanced Regime Detection]")
         regime_detector = AdvancedRegimeDetectionSystem(n_regimes=9)  # Reduced to 9
         
         df_with_regimes = regime_detector.detect_advanced_market_regimes(mock_df)
         
-        print("\n[PHASE 2: Running Strategy Discovery]")
+        logger.info("\n[PHASE 2: Running Strategy Discovery]")
         try:
             strategy_discoverer = RegimeStrategyDiscovery(regime_detector)
             strategy_playbook = strategy_discoverer.discover_strategies()
             strategy_discoverer.print_repository_summary()
             
-            print("✅ Example complete.")
+            logger.info("✅ Example complete.")
 
         except ValueError as e:
-            print(f"\nExample failed: {e}")
-            print("This can happen with mock data if HMM fails to converge.")
+            logger.info(f"\nExample failed: {e}")
+            logger.info("This can happen with mock data if HMM fails to converge.")
         except Exception as e:
-            print(f"\nAn unexpected error occurred: {e}")
+            logger.info(f"\nAn unexpected error occurred: {e}")
             import traceback
             traceback.print_exc()
