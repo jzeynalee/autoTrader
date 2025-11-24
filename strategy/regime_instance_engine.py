@@ -12,6 +12,9 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 from dataclasses import dataclass, field
 
+from ..logger import setup_logging
+logger = setup_logging()
+
 @dataclass
 class RegimeInstance:
     """
@@ -130,14 +133,14 @@ class RegimeInstanceEngine:
         
         Returns list of RegimeInstance objects, each fully characterized.
         """
-        print(f"\n{'='*80}")
-        print(f"REGIME INSTANCE DISCOVERY: {pair} {timeframe}")
-        print(f"{'='*80}")
-        print(f"Dataset: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"REGIME INSTANCE DISCOVERY: {pair} {timeframe}")
+        logger.info(f"{'='*80}")
+        logger.info(f"Dataset: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
         
         # Step 1: Segment the data into instances
         segments = self._segment_data(df)
-        print(f"\nSegmentation: Found {len(segments)} natural segments")
+        logger.info(f"\nSegmentation: Found {len(segments)} natural segments")
         
         # Step 2: Characterize each segment completely
         instances = []
@@ -146,7 +149,7 @@ class RegimeInstanceEngine:
             if instance:
                 instances.append(instance)
         
-        print(f"Created: {len(instances)} regime instances")
+        logger.info(f"Created: {len(instances)} regime instances")
         
         # Step 3: Calculate outcome metrics
         instances = self._calculate_outcomes(df, instances)
@@ -235,7 +238,7 @@ class RegimeInstanceEngine:
             # Execute split
             if triggered and (i - seg_start) >= self.min_bars:
                 segments.append((seg_start, i))
-                print(f"  Segment {len(segments)}: bars {seg_start}-{i} ({i-seg_start} bars) - {reason}")
+                logger.info(f"  Segment {len(segments)}: bars {seg_start}-{i} ({i-seg_start} bars) - {reason}")
                 seg_start = i
         
         # Final segment
