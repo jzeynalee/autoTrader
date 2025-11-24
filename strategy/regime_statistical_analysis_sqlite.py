@@ -64,6 +64,13 @@ try:
 except Exception:
     SHAP_AVAILABLE = False
 
+from ..logger import setup_logging
+
+# Initialize global logger (can be reconfigured)
+logger = setup_logging()
+
+
+
 # Timeframes to exclude from analysis (non-trading timeframes)
 EXCLUDED_TIMEFRAMES = ['1m']  # 1m is not a main trading timeframe
 
@@ -121,7 +128,7 @@ class RegimeStatisticalAnalyzer:
         
     def _optimize_database(self):
         """Create database indexes for dramatically faster queries (10-100x speedup)"""
-        print("🔧 Optimizing database indexes...")
+        logger.info("🔧 Optimizing database indexes...")
         indexes_to_create = [
             # Core regime instance indexes
             ("idx_regime_instances_regime", "regime_instances", "dominant_structure"),
@@ -152,15 +159,15 @@ class RegimeStatisticalAnalyzer:
                 self.dao.db.execute(query)
                 created += 1
             except Exception as e:
-                print(f"⚠️  Could not create index {idx_name}: {e}")
+                logger.warning(f"⚠️  Could not create index {idx_name}: {e}")
         
         # Commit if connection supports it
         try:
             if hasattr(self.dao.db, 'conn'):
                 self.dao.db.conn.commit()
-            print(f"✅ Created {created}/{len(indexes_to_create)} database indexes")
+            logger.info(f"✅ Created {created}/{len(indexes_to_create)} database indexes")
         except Exception as e:
-            print(f"⚠️  Index commit warning: {e}")
+            logger.warning(f"⚠️  Index commit warning: {e}")
     
     def _progress_tracker(self, current: int, total: int, start_time: float, description: str = ""):
         """Display progress with time estimates"""
@@ -179,7 +186,7 @@ class RegimeStatisticalAnalyzer:
         
         # Print every 10% or every 10 items (whichever is more frequent)
         if current % max(1, total // 10) == 0 or current == total:
-            print(f"   [{current}/{total}] {progress_pct:.1f}% | {elapsed:.1f}s elapsed | {eta_str} | {description}")
+            logger.info(f"   [{current}/{total}] {progress_pct:.1f}% | {elapsed:.1f}s elapsed | {eta_str} | {description}")
     
     def _batch_generator(self, items: List, batch_size: int = 100):
         """Generate batches for memory-efficient processing"""
@@ -239,7 +246,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Running Kruskal-Wallis + ANOVA for {feature_name}...")
+        logger.info(f"🔬 Running Kruskal-Wallis + ANOVA for {feature_name}...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -328,7 +335,7 @@ class RegimeStatisticalAnalyzer:
               'bonferroni_corrected': List[Dict]
             }
         """
-        print(f"🔬 Running pairwise tests for {feature_name}...")
+        logger.info(f"🔬 Running pairwise tests for {feature_name}...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -423,7 +430,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Running Chi-square test for {indicator_name}...")
+        logger.info(f"🔬 Running Chi-square test for {indicator_name}...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -511,7 +518,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Computing mutual information: {indicator_name} -> {outcome}...")
+        logger.info(f"🔬 Computing mutual information: {indicator_name} -> {outcome}...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -585,7 +592,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Computing distance correlation: {indicator_name} -> {outcome}...")
+        logger.info(f"🔬 Computing distance correlation: {indicator_name} -> {outcome}...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -670,7 +677,7 @@ class RegimeStatisticalAnalyzer:
                 'granger_pvalue': None
             }
 
-        print(f"🔬 Running Granger causality: {indicator_name} -> {outcome}...")
+        logger.info(f"🔬 Running Granger causality: {indicator_name} -> {outcome}...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -766,7 +773,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Running multivariate test for {len(features)} features...")
+        logger.info(f"🔬 Running multivariate test for {len(features)} features...")
         
         if not features:
             return {
@@ -871,7 +878,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Computing permutation importance for {len(features)} features...")
+        logger.info(f"🔬 Computing permutation importance for {len(features)} features...")
         
         if not features:
             return {
@@ -971,7 +978,7 @@ class RegimeStatisticalAnalyzer:
                 'shap_values': {}
             }
 
-        print(f"🔬 Computing SHAP values for {len(features)} features...")
+        logger.info(f"🔬 Computing SHAP values for {len(features)} features...")
         
         if not features:
             return {
@@ -1070,7 +1077,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print("🔬 Analyzing Markov transitions...")
+        logger.info("🔬 Analyzing Markov transitions...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -1185,7 +1192,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Running PCA with {n_components} components...")
+        logger.info(f"🔬 Running PCA with {n_components} components...")
         
         if not features:
             return {
@@ -1271,7 +1278,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Computing silhouette score for {len(features)} features...")
+        logger.info(f"🔬 Computing silhouette score for {len(features)} features...")
         
         if not features:
             return {
@@ -1359,7 +1366,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🔬 Testing cluster stability for k in {list(n_clusters_range)}...")
+        logger.info(f"🔬 Testing cluster stability for k in {list(n_clusters_range)}...")
         
         if not features:
             return {
@@ -1490,7 +1497,7 @@ class RegimeStatisticalAnalyzer:
               'interpretation': str
             }
         """
-        print(f"🎯 Finding optimal indicator combinations (max {max_indicators} indicators)...")
+        logger.info(f"🎯 Finding optimal indicator combinations (max {max_indicators} indicators)...")
         
         # Exclude non-trading timeframes
         timeframe_filter = " AND " + " AND ".join([f"ri.timeframe != '{tf}'" for tf in EXCLUDED_TIMEFRAMES])
@@ -1507,7 +1514,7 @@ class RegimeStatisticalAnalyzer:
 
         indicators = [row[0] for row in ind_results]
         
-        print(f"   Testing combinations of {len(indicators)} indicators...")
+        logger.info(f"   Testing combinations of {len(indicators)} indicators...")
 
         # Test combinations of different sizes
         all_combos = []
@@ -1556,11 +1563,11 @@ class RegimeStatisticalAnalyzer:
                         })
                 except Exception as e:
                     # Log specific errors for debugging
-                    print(f"   ⚠️  Error testing combination {combo}: {e}")
+                    logger.info(f"   ⚠️  Error testing combination {combo}: {e}")
                     continue
 
         if not all_combos:
-            print("   ⚠️  No combinations met minimum instance requirement")
+            logger.info("   ⚠️  No combinations met minimum instance requirement")
             return {
                 'combinations_top': [],
                 'error': 'No combinations met minimum instance requirement',
@@ -1572,7 +1579,7 @@ class RegimeStatisticalAnalyzer:
             all_combos.sort(key=lambda x: x.get('avg_3d_return', 0), reverse=True)
             top_combos = all_combos[:20]
         except Exception as e:
-            print(f"   ⚠️  Error sorting combinations: {e}")
+            logger.info(f"   ⚠️  Error sorting combinations: {e}")
             return {
                 'combinations_top': [],
                 'error': f'Error sorting combinations: {e}',
@@ -1744,10 +1751,10 @@ class RegimeStatisticalAnalyzer:
         OPTIMIZED VERSION with progress tracking and better error handling.
         Excludes 1m timeframe from all analyses.
         """
-        print("\n" + "="*80)
-        print("STATISTICAL ANALYSIS SUITE")
-        print("="*80)
-        print(f"ℹ️  Excluding timeframes: {', '.join(EXCLUDED_TIMEFRAMES)}")
+        logger.info("\n" + "="*80)
+        logger.info("STATISTICAL ANALYSIS SUITE")
+        logger.info("="*80)
+        logger.info(f"ℹ️  Excluding timeframes: {', '.join(EXCLUDED_TIMEFRAMES)}")
         overall_start = time.time()
         
         results = {
@@ -1757,56 +1764,56 @@ class RegimeStatisticalAnalyzer:
         }
         
         # Get list of indicators
-        print("\n📊 Discovering indicators...")
+        logger.info("\n📊 Discovering indicators...")
         try:
             indicators_query = "SELECT DISTINCT indicator_name FROM regime_confirming_indicators ORDER BY indicator_name"
             indicators = self.dao.db.execute(indicators_query, fetch=True)
             
             if not indicators:
-                print("⚠️  No indicators found in database")
+                logger.info("⚠️  No indicators found in database")
                 return results
             
             indicator_names = [row[0] for row in indicators]
-            print(f"✅ Found {len(indicator_names)} indicators to analyze")
+            logger.info(f"✅ Found {len(indicator_names)} indicators to analyze")
             
         except Exception as e:
-            print(f"❌ Failed to get indicators: {e}")
+            logger.error(f"❌ Failed to get indicators: {e}")
             return results
         
         # Analyze indicators sequentially with progress tracking
-        print(f"\n🔬 Analyzing {len(indicator_names)} indicators...")
+        logger.info(f"\n🔬 Analyzing {len(indicator_names)} indicators...")
         analysis_start = time.time()
         
         for idx, indicator_name in enumerate(indicator_names, 1):
-            print(f"\n[{idx}/{len(indicator_names)}] Analyzing {indicator_name}...")
+            logger.info(f"\n[{idx}/{len(indicator_names)}] Analyzing {indicator_name}...")
             try:
                 analysis = self.analyze_indicator_causality(indicator_name)
                 results['analyses'][indicator_name] = analysis
             except Exception as e:
-                print(f"   ❌ Failed: {e}")
+                logger.info(f"   ❌ Failed: {e}")
                 results['analyses'][indicator_name] = {'error': str(e)}
             
             self._progress_tracker(idx, len(indicator_names), analysis_start, indicator_name)
         
         analysis_time = time.time() - analysis_start
-        print(f"\n✅ Indicator analysis complete ({analysis_time:.1f}s)")
+        logger.info(f"\n✅ Indicator analysis complete ({analysis_time:.1f}s)")
         
         # Find optimal combinations
-        print("\n🎯 Finding optimal indicator combinations...")
+        logger.info("\n🎯 Finding optimal indicator combinations...")
         combo_start = time.time()
         try:
             results['optimal_combinations'] = self.find_optimal_indicator_combinations()
         except Exception as e:
-            print(f"❌ Combination analysis failed: {e}")
+            logger.error(f"❌ Combination analysis failed: {e}")
             results['optimal_combinations'] = {'combinations_top': [], 'error': str(e)}
         combo_time = time.time() - combo_start
-        print(f"✅ Combination analysis complete ({combo_time:.1f}s)")
+        logger.info(f"✅ Combination analysis complete ({combo_time:.1f}s)")
         
         overall_time = time.time() - overall_start
         print(f"\n" + "="*80)
-        print(f"✅ FULL ANALYSIS COMPLETE IN {overall_time:.1f}s")
-        print("="*80)
-        print(f"   Indicators analyzed: {len(results['analyses'])}")
-        print(f"   Combinations found: {len(results.get('optimal_combinations', {}).get('combinations_top', []))}")
+        logger.info(f"✅ FULL ANALYSIS COMPLETE IN {overall_time:.1f}s")
+        logger.info("="*80)
+        logger.info(f"   Indicators analyzed: {len(results['analyses'])}")
+        logger.info(f"   Combinations found: {len(results.get('optimal_combinations', {}).get('combinations_top', []))}")
         
         return results

@@ -21,10 +21,17 @@ import pandas as pd
 import numpy as np
 import uuid
 import warnings
+import logging
+import os
 from scipy import stats
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from ..logger import setup_logging
+
+# Initialize global logger (can be reconfigured)
+logger = setup_logging()
 
 # ML Libraries
 try:
@@ -32,14 +39,14 @@ try:
     HMM_AVAILABLE = True
 except ImportError:
     HMM_AVAILABLE = False
-    print("Warning: hmmlearn not available. Install with: pip install hmmlearn")
+    logger.info("Warning: hmmlearn not available. Install with: pip install hmmlearn")
 
 try:
     import xgboost as xgb
     XGB_AVAILABLE = True
 except ImportError:
     XGB_AVAILABLE = False
-    print("Warning: xgboost not available. Install with: pip install xgboost")
+    logger.info("Warning: xgboost not available. Install with: pip install xgboost")
 
 try:
     from sklearn.preprocessing import StandardScaler
@@ -47,7 +54,41 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
-    print("Warning: scikit-learn not available. Install with: pip install scikit-learn")
+    logger.info("Warning: scikit-learn not available. Install with: pip install scikit-learn")
+
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision loss occurred.*')
+
+
+
+# ============================================================================
+# ML LIBRARY IMPORTS WITH LOGGING
+# ============================================================================
+
+try:
+    from hmmlearn.hmm import GaussianHMM
+    HMM_AVAILABLE = True
+    logger.info("✓ hmmlearn library loaded successfully")
+except ImportError:
+    HMM_AVAILABLE = False
+    logger.warning("✗ hmmlearn not available. Install with: pip install hmmlearn")
+
+try:
+    import xgboost as xgb
+    XGB_AVAILABLE = True
+    logger.info("✓ xgboost library loaded successfully")
+except ImportError:
+    XGB_AVAILABLE = False
+    logger.warning("✗ xgboost not available. Install with: pip install xgboost")
+
+try:
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
+    SKLEARN_AVAILABLE = True
+    logger.info("✓ scikit-learn library loaded successfully")
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    logger.warning("✗ scikit-learn not available. Install with: pip install scikit-learn")
 
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision loss occurred.*')
@@ -55,6 +96,7 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision lo
 # ============================================================================
 # SECTION 1: DATA STRUCTURES
 # ============================================================================
+
 
 @dataclass
 class SwingPoint:
@@ -852,11 +894,11 @@ class AdvancedRegimeDetectionSystem:
                 #return self._extract_from_precomputed(df, lookback)
                 pass
             else:
-                print("  ⚠️ Pre-computed swings missing/empty")
+                logger.info("  ⚠️ Pre-computed swings missing/empty")
                 #return self.zigzag.extract_swings(df)
 
         if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
-            print("⚠️ swing_high/swing_low not found. Run feature engineering first.")
+            logger.info("⚠️ swing_high/swing_low not found. Run feature engineering first.")
             return swings
 
         highs = df['high'].values
@@ -1021,7 +1063,7 @@ class AdvancedRegimeDetectionSystem:
             })
             try:
                 if verbose_eval:
-                    print("  🎯 Training XGBoost regime predictor on GPU (gpu_hist)...")
+                    logger.info("  🎯 Training XGBoost regime predictor on GPU (gpu_hist)...")
                 model = xgb.train(gpu_params, dtrain,
                                   num_boost_round=num_boost_round,
                                   evals=evals,
@@ -1032,7 +1074,7 @@ class AdvancedRegimeDetectionSystem:
                 preds_label = preds.argmax(axis=1)
             except Exception as gpu_err:
                 # fallback to CPU
-                print(f"  ⚠️ GPU training failed ({type(gpu_err).__name__}: {gpu_err}). Falling back to CPU 'hist'.")
+                logger.info(f"  ⚠️ GPU training failed ({type(gpu_err).__name__}: {gpu_err}). Falling back to CPU 'hist'.")
                 model = None
 
         # CPU fallback
@@ -1044,7 +1086,7 @@ class AdvancedRegimeDetectionSystem:
             })
             try:
                 if verbose_eval:
-                    print("  🎯 Training XGBoost regime predictor on CPU (hist)...")
+                    logger.info("  🎯 Training XGBoost regime predictor on CPU (hist)...")
                 model = xgb.train(cpu_params, dtrain,
                                   num_boost_round=num_boost_round,
                                   evals=evals,
@@ -1195,11 +1237,11 @@ class AdvancedRegimeDetectionSystem:
     def detect_advanced_market_regimes(self, df: pd.DataFrame) -> pd.DataFrame:
         """Main function to add historical regime data to a DataFrame."""
 
-        print(f"\n{'='*80}")
-        print(f"REGIME DETECTION DIAGNOSTICS")
-        print(f"{'='*80}")
-        print(f"Dataset size: {len(df)} bars")
-        print(f"Date range: {df.index[0]} to {df.index[-1]}")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"REGIME DETECTION DIAGNOSTICS")
+        logger.info(f"{'='*80}")
+        logger.info(f"Dataset size: {len(df)} bars")
+        logger.info(f"Date range: {df.index[0]} to {df.index[-1]}")
         
         if len(df) < 50:
             df['historical_regime'] = 'unknown'
@@ -1222,33 +1264,33 @@ class AdvancedRegimeDetectionSystem:
         assert df['swing_high'].sum() > 0, "No swing highs detected in data"
         assert df['swing_low'].sum() > 0, "No swing lows detected in data"
 
-        print(f"Pre-computed swings found:")
-        print(f"  - Swing highs: {df['swing_high'].sum()}")
-        print(f"  - Swing lows: {df['swing_low'].sum()}")
-        print(f"  - Total: {df['swing_high'].sum() + df['swing_low'].sum()}")
+        logger.info(f"Pre-computed swings found:")
+        logger.info(f"  - Swing highs: {df['swing_high'].sum()}")
+        logger.info(f"  - Swing lows: {df['swing_low'].sum()}")
+        logger.info(f"  - Total: {df['swing_high'].sum() + df['swing_low'].sum()}")
 
         swing_points = self._extract_feature_engineered_swings(df_analysis)
         
         # Swing extraction diagnostics (moved here from top of method)
-        print(f"\nSwing Extraction:")
-        print(f"  - Total swings detected: {len(swing_points)}")
+        logger.info(f"\nSwing Extraction:")
+        logger.info(f"  - Total swings detected: {len(swing_points)}")
 
         if len(swing_points) > 0:
-            print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
-            print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
+            logger.info(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
+            logger.info(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
                 
         if len(swing_points) < 10:
-            print(f"  ⚠️  Insufficient swings ({len(swing_points)}) for regime detection")
+            logger.info(f"  ⚠️  Insufficient swings ({len(swing_points)}) for regime detection")
             df_analysis['historical_regime'] = 'unknown'
             df_analysis['regime_volatility'] = 'normal'
             df_analysis['regime_trend'] = 'ranging'
             return df_analysis
         
         # After swing extraction
-        print(f"\nSwing Extraction:")
-        print(f"  - Total swings detected: {len(swing_points)}")
-        print(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
-        print(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
+        logger.info(f"\nSwing Extraction:")
+        logger.info(f"  - Total swings detected: {len(swing_points)}")
+        logger.info(f"  - Swings per month: {len(swing_points) / (len(df) / 720):.1f}")
+        logger.info(f"  - Average swing magnitude: {np.mean([s['magnitude_pct'] for s in swing_points]):.2f}%")
         
         # ========================================================================
         # PHASE 2: Build Hybrid Swing Registry
@@ -1274,17 +1316,17 @@ class AdvancedRegimeDetectionSystem:
                     swing.hmm_probability = float(hmm_probs[i])
                     
             except Exception as e:
-                print(f"  ⚠️  HMM failed: {e}")
+                logger.info(f"  ⚠️  HMM failed: {e}")
                 hmm_labels = np.zeros(len(swing_df), dtype=int)
         else:
             hmm_labels = np.zeros(len(swing_df), dtype=int)
 
         # After HMM
-        print(f"\nHMM Classification:")
-        print(f"  - Regime types detected: {len(np.unique(hmm_labels))}")
+        logger.info(f"\nHMM Classification:")
+        logger.info(f"  - Regime types detected: {len(np.unique(hmm_labels))}")
         regime_counts = pd.Series(hmm_labels).value_counts()
         for regime_id, count in regime_counts.items():
-            print(f"    Regime {regime_id}: {count} swings ({count/len(hmm_labels)*100:.1f}%)")
+            logger.info(f"    Regime {regime_id}: {count} swings ({count/len(hmm_labels)*100:.1f}%)")
         
         # ========================================================================
         # PHASE 3.5: Build Regime Type Map
@@ -1334,14 +1376,14 @@ class AdvancedRegimeDetectionSystem:
                 swing.regime_instance_index = inst_idx
             
         except Exception as e:
-            print(f"  ⚠️  Instance segmentation failed: {e}")
+            logger.info(f"  ⚠️  Instance segmentation failed: {e}")
            
         # After instance segmentation
-        print(f"\nInstance Segmentation:")
+        logger.info(f"\nInstance Segmentation:")
         instance_counts = swing_df['regime_instance_id'].value_counts()
-        print(f"  - Total instances created: {len(instance_counts)}")
-        print(f"  - Swings per instance (avg): {instance_counts.mean():.1f}")
-        print(f"  - Swings per instance (median): {instance_counts.median():.1f}")
+        logger.info(f"  - Total instances created: {len(instance_counts)}")
+        logger.info(f"  - Swings per instance (avg): {instance_counts.mean():.1f}")
+        logger.info(f"  - Swings per instance (median): {instance_counts.median():.1f}")
         
         # ========================================================================
         # PHASE 4: XGBoost Prediction
@@ -1395,7 +1437,7 @@ class AdvancedRegimeDetectionSystem:
                     swing.prediction_confidence = float(pred_confidences[i])
                     
             except Exception as e:
-                print(f"  ⚠️  XGBoost failed: {e}")
+                logger.info(f"  ⚠️  XGBoost failed: {e}")
         
         # ========================================================================
         # PHASE 5: Map Regimes to DataFrame
@@ -1455,7 +1497,7 @@ class AdvancedRegimeDetectionSystem:
             return instance_indices
 
         
-        print("  ✅ Regime detection complete")
+        logger.info("  ✅ Regime detection complete")
         
         return df_analysis
     
@@ -1578,7 +1620,7 @@ class AdvancedRegimeDetectionSystem:
         """Export Hybrid Swing Registry to CSV."""
         swing_df = self.registry.to_dataframe()
         swing_df.to_csv(filename, index=False)
-        print(f"✅ Swing registry exported to {filename}")
+        logger.info(f"✅ Swing registry exported to {filename}")
 
     def _segment_regime_instances(
         self,
@@ -1631,7 +1673,7 @@ class AdvancedRegimeDetectionSystem:
         else:
             adaptive_max = 60
         
-        print(f"  Adaptive thresholds: min={adaptive_min}, max={adaptive_max}")
+        logger.info(f"  Adaptive thresholds: min={adaptive_min}, max={adaptive_max}")
         
         # Use adaptive values
         min_instance_swings = adaptive_min
@@ -1653,7 +1695,7 @@ class AdvancedRegimeDetectionSystem:
             adaptive_max = 60
         
         if adaptive_max < max_instance_swings:
-            print(f"     Adaptive max_instance_swings: {adaptive_max} (was {max_instance_swings})")
+            logger.info(f"     Adaptive max_instance_swings: {adaptive_max} (was {max_instance_swings})")
             max_instance_swings = adaptive_max
 
         # =========================================================================
@@ -1832,15 +1874,15 @@ class AdvancedRegimeDetectionSystem:
 # ============================================================================
 
 if __name__ == "__main__":
-    print("Price Action Regime Detection System")
+    logger.info("Price Action Regime Detection System")
     print("="*80)
-    print("\nThis module requires integration with the main trading system.")
-    print("Import and use AdvancedRegimeDetectionSystem in your pipeline.")
-    print("\nExample:")
-    print("  from analysis_advanced_regime import AdvancedRegimeDetectionSystem")
-    print("  detector = AdvancedRegimeDetectionSystem()")
-    print("  df_with_regimes = detector.detect_advanced_market_regimes(df)")
-    print("\nRequired dependencies:")
-    print("  - hmmlearn (pip install hmmlearn)")
-    print("  - xgboost (pip install xgboost)")
-    print("  - scikit-learn (pip install scikit-learn)")
+    logger.info("\nThis module requires integration with the main trading system.")
+    logger.info("Import and use AdvancedRegimeDetectionSystem in your pipeline.")
+    logger.info("\nExample:")
+    logger.info("  from analysis_advanced_regime import AdvancedRegimeDetectionSystem")
+    logger.info("  detector = AdvancedRegimeDetectionSystem()")
+    logger.info("  df_with_regimes = detector.detect_advanced_market_regimes(df)")
+    logger.info("\nRequired dependencies:")
+    logger.info("  - hmmlearn (pip install hmmlearn)")
+    logger.info("  - xgboost (pip install xgboost)")
+    logger.info("  - scikit-learn (pip install scikit-learn)")

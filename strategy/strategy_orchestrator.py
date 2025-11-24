@@ -9,6 +9,11 @@ from functools import lru_cache
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 
+from ..logger import setup_logging
+
+# Initialize global logger (can be reconfigured)
+logger = setup_logging()
+
 # Note: We keep the relative imports here, assuming execution via autoTrader.main
 try:
     from .discovery_mapping import (
