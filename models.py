@@ -9,6 +9,47 @@ from typing import Optional, Dict, List, Any, Union
 # ENUMS (Standardized Constants)
 # =============================================================================
 
+@dataclass
+class IndicatorCondition:
+    """Single indicator condition with specific threshold"""
+    indicator: str
+    operator: str  # >, <, >=, <=, ==, crosses_above, crosses_below
+    value: float
+    timeframe: str
+    lookback: int = 1  # bars to look back for confirmation
+    
+    def to_formula(self) -> str:
+        """Convert to human-readable formula"""
+        if self.operator in ['crosses_above', 'crosses_below']:
+            return f"{self.indicator}[{self.timeframe}] {self.operator} {self.value} (confirmed {self.lookback} bars)"
+        return f"{self.indicator}[{self.timeframe}] {self.operator} {self.value}"
+
+@dataclass
+class TimeframeFormula:
+    """Complete formula for one timeframe"""
+    timeframe: str
+    primary_conditions: List[IndicatorCondition]  # Must ALL be true
+    confirmation_conditions: List[IndicatorCondition]  # At least N must be true
+    min_confirmations: int = 2
+    causal_chain: List[str] = None  # Causal relationships from stats
+    
+    def to_formula_string(self) -> str:
+        """Generate readable formula"""
+        primary = " AND ".join([c.to_formula() for c in self.primary_conditions])
+        
+        if self.confirmation_conditions:
+            confirm_count = min(self.min_confirmations, len(self.confirmation_conditions))
+            confirm = f" AND (At least {confirm_count} of: " + \
+                     ", ".join([c.to_formula() for c in self.confirmation_conditions]) + ")"
+        else:
+            confirm = ""
+        
+        causal = ""
+        if self.causal_chain:
+            causal = f" | Causal chain: {' → '.join(self.causal_chain)}"
+        
+        return f"[{self.timeframe}] {primary}{confirm}{causal}"
+
 class TradeDirection(str, Enum):
     LONG = "LONG"
     SHORT = "SHORT"
