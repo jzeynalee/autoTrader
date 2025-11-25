@@ -440,30 +440,48 @@ class DatabaseConnector:
         return [row[0] for row in cursor.fetchall()]
 
     def load_raw_ohlcv(self, pair_tf: str, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
-        """Loads raw OHLCV data from features_data for feature calculation."""
-        if not self.conn:
-            return None
-        
-        limit_clause = f"LIMIT {limit}" if limit else ""
-        query = f"""
-            SELECT timestamp, open, high, low, close, volume 
-            FROM features_data 
-            WHERE pair_tf = ?
-            ORDER BY timestamp ASC
-            {limit_clause};
         """
+        Loads raw OHLCV data from features_data for feature calculation.
+        FIX: When limit is used, fetches the *latest* N rows, not the oldest.
+        """
+        if not self.conn:
+            return None        
+
         try:
+            if limit:
+                # Fetch LATEST rows (DESC), then sort back to ASC for processing
+                query = f"""
+                    SELECT * FROM (
+                        SELECT timestamp, open, high, low, close, volume 
+                        FROM features_data 
+                        WHERE pair_tf = ?
+                        ORDER BY timestamp DESC
+                        LIMIT {limit}
+                    ) ORDER BY timestamp ASC;
+                """
+            else:
+                # Fetch ALL rows
+                query = """
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM features_data 
+                    WHERE pair_tf = ?
+                    ORDER BY timestamp ASC;
+                """
+
             df = pd.read_sql_query(query, self.conn, params=(pair_tf,))
+            
             if df.empty:
                 return None
             
+            # Convert integer timestamp to datetime index
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             df = df.set_index('timestamp')
             return df
+            
         except Exception as e:
             print(f"❌ Error loading raw OHLCV for {pair_tf}: {e}")
             return None
-
+        
     def get_all_calculated_pair_tfs(self) -> List[str]:
         """Retrieves all pair_tfs that have calculated features (non-null RSI placeholder)."""
         if not self.conn: return []

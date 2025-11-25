@@ -292,6 +292,14 @@ class BacktestingMixin:
             active_mask = pd.Series(True, index=ltf_df.index)
             direction = strategy['direction']
             
+            # This filters out counter-trend trades which are usually low quality
+            if 'trend_structure' in htf_df.columns:
+                # Map HTF rows to LTF (reindex/ffill done in get_mtf_dataframes, assuming aligned)
+                if direction == 'bullish':
+                    active_mask &= (htf_df['trend_structure'].isin(['Uptrend', 'Strong Uptrend']))
+                else:
+                    active_mask &= (htf_df['trend_structure'].isin(['Downtrend', 'Strong Downtrend']))
+            
             # --- START OF FIX: PASS pair_tf ---
             htf_pair_tf = f"{pair}_{strategy['htf_timeframe']}"
             ttf_pair_tf = f"{pair}_{strategy['ttf_timeframe']}"
