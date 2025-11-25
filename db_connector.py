@@ -529,9 +529,13 @@ class DatabaseConnector:
         if not self.conn or df_features.empty:
             return
         
+        # --- FIX: Create an explicit copy to avoid SettingWithCopyWarning ---
+        df_features = df_features.copy()
+        
         # 1. Prepare data for insertion (Ensure index is in seconds for PK matching)
         df_features['timestamp'] = df_features.index.astype(int) // 10**9
         df_features['pair_tf'] = pair_tf
+        
         df_to_save = df_features.reset_index(drop=True)
         
         # 2. Dynamic column handling (SQLite requires explicit column list for INSERT OR REPLACE)

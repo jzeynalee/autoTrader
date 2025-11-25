@@ -437,7 +437,7 @@ class FeatureEngineerOptimized:
             
             return aroon_up, aroon_down, aroon_osc
 
-        cols['aroon_up'], cols['aroon_down'], cols['aroon_osc'] = calculate_aroon_accelerated(df['high'].values, 25, True)
+        cols['aroon_up'], cols['aroon_down'], cols['aroon_osc'] = calculate_aroon_accelerated(df, 25)
         
         # ============ ICHIMOKU (Vectorized) ============
         period9_high = df['high'].rolling(9).max()
@@ -522,7 +522,7 @@ class FeatureEngineerOptimized:
             """
             n = len(close_arr)
             if n == 0:
-                return np.array([])
+                return np.empty(0, dtype=np.float64)
             
             psar = np.zeros(n, dtype=np.float64)
             
@@ -927,7 +927,7 @@ class FeatureEngineerOptimized:
                 kama[i] = kama[i-1] + sc * (prices[i] - kama[i-1])
             
             return kama
-        cols['kama'] = kama_numba(df['close'], 10, 2, 30)
+        cols['kama'] = kama_numba(df['close'].values, 10, 2, 30)
 
         # ============ PPO ============
         ema_fast = self.ema(df['close'], 12)

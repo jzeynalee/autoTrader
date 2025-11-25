@@ -11,19 +11,19 @@ import schedule
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-
 from .db_connector import DatabaseConnector
 from .ingestion import DataIngestionSystem
 from .features_engineering import FeatureEngineer
-from .strategy.strategy_orchestrator import run_strategy_discovery # New entry function
+from .strategy.strategy_orchestrator import run_strategy_discovery
 from .strategy.analysis_advanced_regime import AdvancedRegimeDetectionSystem
-from .config import get_db_path # Import the config helper
+from .config import get_db_path
 
 # --- PILLAR 1: STRATEGY FINDER (The Researcher) ---
 def run_discovery_pillar(interval_hours=4):
     """
     Pillar 1: Runs periodically on heavy historical data.
-    Detects regimes and updates the Strategy Playbook.
+    1. Updates Features (Calculates indicators)
+    2. Detects regimes and updates the Strategy Playbook.
     """
     print(f"🔍 [Discovery] Process started (PID: {os.getpid()})")
     db_path = get_db_path()
@@ -33,12 +33,24 @@ def run_discovery_pillar(interval_hours=4):
         try:
             # Create a fresh DB connection for this process
             db = DatabaseConnector(db_path)
-            # Run the heavy discovery pipeline
+            
+            # --- STEP 1: Feature Engineering (The Fix) ---
+            # We must calculate indicators before we can discover strategies based on them.
+            print("⚙️ [Discovery] Updating Features (Engineering)...")
+            fe = FeatureEngineer(db)
+            fe.calculate_and_save_all_features()
+            
+            # --- STEP 2: Strategy Discovery ---
+            print("🧠 [Discovery] Running Strategy Orchestrator...")
             run_strategy_discovery(db_connector=db)
+            
             db.close()
             print(f"✅ [Discovery] Cycle complete. Sleeping...")
+            
         except Exception as e:
             print(f"❌ [Discovery] Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Run immediately on startup
     job()
@@ -59,24 +71,20 @@ def run_execution_pillar():
     db_path = get_db_path()
     db = DatabaseConnector(db_path)
     
-    # In a real scenario, you would initialize your WebSocket client here
-    # from .ingestion import DataIngestionSystem
-    # ingestion = DataIngestionSystem(db)
-    # ingestion.start_websocket_listener() (Async)
+    # Initialize components
+    ingestion = DataIngestionSystem(db_connector=db)
+    
+    # In a real scenario, you would start the socket here
+    # ingestion.start_websocket_listener() 
 
     print("🔫 [Execution] Entering High-Frequency Loop...")
     while True:
         try:
-            # 1. Get latest live price (Simulated here)
-            # latest_bar = ingestion.get_latest_bar()
+            # Placeholder for live trading loop
+            # 1. Get latest live price
+            # 2. Update incremental features
+            # 3. Check Playbook
             
-            # 2. Fetch active strategies from DB Playbook
-            # strategies = db.fetch("SELECT * FROM strategy_playbook WHERE status='ACTIVE'")
-            
-            # 3. Check for entry signals
-            # if signal_found: execute_order()
-            
-            # Sleep to match candle timeframe or tick rate
             time.sleep(1) 
             
         except KeyboardInterrupt:
@@ -94,22 +102,14 @@ def run_risk_pillar():
     db_path = get_db_path()
     db = DatabaseConnector(db_path)
     
-    # from .trailing import TrailingStopEngine
-    
     print("🛡️ [Risk Manager] Monitoring Positions...")
     while True:
         try:
-            # 1. Fetch Open Positions
-            # positions = db.fetch("SELECT * FROM positions WHERE status='OPEN'")
+            # Placeholder for risk management
+            # 1. Fetch positions
+            # 2. Check stops/targets
             
-            # 2. For each position:
-            #    - Check if Stop Loss hit
-            #    - Check if Take Profit hit
-            #    - Update Trailing Stop (using trailing.py logic)
-            
-            # 3. Close positions if needed
-            
-            time.sleep(1) # Fast loop for risk checks
+            time.sleep(1) 
             
         except KeyboardInterrupt:
             break
@@ -120,8 +120,22 @@ def run_risk_pillar():
 # --- MAIN ORCHESTRATOR ---
 def start_system(args):
     processes = []
+    
+    print(f"\n🚀 STARTING AUTO TRADER [Mode: {args.mode.upper()}]")
+    print("="*60)
 
-    # Define the pillars based on arguments
+    # 1. Initial Ingestion Check (Optional but recommended before branching)
+    if args.mode in ['all', 'discover']:
+        # Run a quick check or initial historical load in the main process
+        # so workers have something to work with immediately.
+        try:
+            db_path = get_db_path()
+            print(f"--- Pre-flight: Connecting to {db_path} ---")
+            # You could run initial ingestion here if needed
+        except Exception as e:
+            print(f"⚠️ Pre-flight check warning: {e}")
+
+    # 2. Define the pillars based on arguments
     if args.mode in ['all', 'discover']:
         p1 = multiprocessing.Process(target=run_discovery_pillar, name="DiscoveryEngine")
         processes.append(p1)
@@ -134,21 +148,19 @@ def start_system(args):
         p3 = multiprocessing.Process(target=run_risk_pillar, name="RiskEngine")
         processes.append(p3)
 
-    # Start all processes
-    print(f"\n🚀 STARTING AUTO TRADER [Mode: {args.mode.upper()}]")
-    print("="*60)
-    
+    # 3. Start all processes
     for p in processes:
         p.start()
         
-    # Monitor loop
+    # 4. Monitor loop (Main Process)
     try:
         while True:
             time.sleep(1)
-            # Check if processes are alive, restart if crashed (advanced logic can go here)
+            # Simple health check
             for p in processes:
                 if not p.is_alive():
-                    print(f"⚠️ Process {p.name} died! (Real system should restart this)")
+                    print(f"⚠️ Process {p.name} died! (PID: {p.pid})")
+                    # Logic to restart process could go here
                     break
     except KeyboardInterrupt:
         print("\n\n🛑 Shutting down all pillars...")
@@ -169,53 +181,3 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     args = parse_args()
     start_system(args)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="AutoTrader Algorithmic Strategy Platform")
-    parser.add_argument('--mode', type=str, default='all', 
-                        choices=['all', 'ingest', 'feature', 'discover'],
-                        help="Execution mode: ingest data, engineer features, or run discovery.")
-    return parser.parse_args()
-
-def main():
-    args = parse_args()
-    
-    print("\n" + "="*80)
-    print("AUTO TRADER APPLICATION STARTUP")
-    print("="*80)
-
-    # 1. Initialize Database from Config
-    db_path = get_db_path()
-    print(f"--- Connecting to database: {db_path} ---")
-    db_connector = DatabaseConnector(db_path=db_path)
-    
-    # 2. Initialize Core Modules
-    ingestion_system = DataIngestionSystem(db_connector=db_connector)
-    feature_engineer = FeatureEngineer(db_connector=db_connector)
-
-    if args.mode in ['all', 'ingest']:
-        # A. Ingestion: Fetch historical and start WebSocket (simulated)
-        print("\n--- Starting Data Ingestion Service ---")
-        ingestion_system.start_historical_ingestion()
-        # ingestion_system.start_websocket_listener() # Future: Must be threaded/async
-
-    if args.mode in ['all', 'feature']:
-        # B. Feature Engineering: Calculate indicators on raw data
-        print("\n--- Starting Feature Engineering Service ---")
-        feature_engineer.calculate_and_save_all_features()
-
-    if args.mode in ['all', 'discover']:
-        # C. Strategy Discovery: Run the main orchestration logic
-        print("\n--- Starting Strategy Discovery Pipeline ---")
-        # The Orchestrator manages Phases 1-7 using the already populated database
-        run_strategy_discovery(db_connector=db_connector)
-
-    print("\n" + "="*80)
-    print("APPLICATION SHUTDOWN COMPLETE")
-    print("="*80)
-    db_connector.close()
-
-
-if __name__ == "__main__":
-    main()

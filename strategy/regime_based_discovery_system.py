@@ -1316,6 +1316,7 @@ class RegimeStrategyDiscovery:
     Builds the Repository of Strategies by analyzing HMM regime-labeled swings.
     
     FIXED: Now uses regime_id as dictionary keys throughout.
+    FIXED: Adds 'pair_tf' to strategies to prevent backtester crash.
     """
     
     def __init__(self, regime_system: AdvancedRegimeDetectionSystem):
@@ -1391,6 +1392,15 @@ class RegimeStrategyDiscovery:
             
             # Get regime metadata
             first_swing = swings[0]
+            
+            # --- FIX START: Extract pair_tf for Backtester ---
+            pair = first_swing.get('pair')
+            timeframe = first_swing.get('timeframe')
+            pair_tf = first_swing.get('pair_tf')
+            if not pair_tf and pair and timeframe:
+                pair_tf = f"{pair}_{timeframe}"
+            # --- FIX END ---
+            
             regime_id = None
             if 'hmm_regime' in first_swing and pd.notna(first_swing['hmm_regime']):
                 regime_id = int(first_swing['hmm_regime'])
@@ -1494,6 +1504,7 @@ class RegimeStrategyDiscovery:
                     'regime_name': regime_state.name if regime_state else f"R{regime_id}",
                     'trend_direction': regime_state.trend_direction if regime_state else 'unknown',
                     'volatility_level': regime_state.volatility_level if regime_state else 'unknown',
+                    'pair_tf': pair_tf, # <--- STORE pair_tf
                 }
 
         # ========================================================================
@@ -1509,6 +1520,9 @@ class RegimeStrategyDiscovery:
                 'regime_name': meta.get('regime_name'),
                 'trend_direction': meta.get('trend_direction', 'unknown'),
                 'volatility_level': meta.get('volatility_level', 'unknown'),
+                'pair_tf': meta.get('pair_tf', 'unknown_1m'), # <--- ADD THIS
+                'strategy_id': f"PLAYBOOK_{meta.get('regime_label', 'Unknown')}_{inst_key}", # Helpful ID
+                'type': 'regime_playbook', # Helpful for backtester
                 'confirming_indicators': sorted(list(sets['confirming_indicators'])),
                 'strategy_patterns': sorted(list(sets['strategy_patterns']))
             }
