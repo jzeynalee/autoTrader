@@ -29,8 +29,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from ..logger import setup_logging
-
-# Initialize global logger (can be reconfigured)
 logger = setup_logging()
 
 # ML Libraries
@@ -71,7 +69,7 @@ try:
     logger.info("✓ hmmlearn library loaded successfully")
 except ImportError:
     HMM_AVAILABLE = False
-    logger.warning("✗ hmmlearn not available. Install with: pip install hmmlearn")
+    logger.error("✗ hmmlearn not available. Install with: pip install hmmlearn")
 
 try:
     import xgboost as xgb
@@ -79,7 +77,7 @@ try:
     logger.info("✓ xgboost library loaded successfully")
 except ImportError:
     XGB_AVAILABLE = False
-    logger.warning("✗ xgboost not available. Install with: pip install xgboost")
+    logger.error("✗ xgboost not available. Install with: pip install xgboost")
 
 try:
     from sklearn.preprocessing import StandardScaler
@@ -88,7 +86,7 @@ try:
     logger.info("✓ scikit-learn library loaded successfully")
 except ImportError:
     SKLEARN_AVAILABLE = False
-    logger.warning("✗ scikit-learn not available. Install with: pip install scikit-learn")
+    logger.error("✗ scikit-learn not available. Install with: pip install scikit-learn")
 
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision loss occurred.*')

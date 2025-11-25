@@ -3241,12 +3241,10 @@ class DiscoveryModesMixin(ReportsMixin, PatternsMixin):
             all_mtf_strategies.extend(group_strategies)
 
             # Print detailed breakdown
-            logger.info(f"  ✓ {group_name}: ", end="")
+            summary_parts = [f"  ✓ {group_name}:"]
             for mode, count in strategy_counts.items():
-                logger.info(f"{count}{mode} ", end="")
-            print()
-
-        
+                summary_parts.append(f"{count}{mode}")
+            logger.info(" ".join(summary_parts))        
         
         # Filter for quality
         all_mtf_strategies = self._filter_and_rank_strategies(all_mtf_strategies)

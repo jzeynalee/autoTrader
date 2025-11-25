@@ -41,11 +41,9 @@ logger = setup_logging()
 from .analysis_advanced_regime import AdvancedRegimeDetectionSystem, RegimeState
 from .regime_statistical_analysis_sqlite import RegimeStatisticalAnalyzer
 
-
 # ============================================================================
 # SECTION 1: INDICATOR & PATTERN LOGIC
 # ============================================================================
-
 
 class StrategyIndicatorRules:
     """
@@ -205,37 +203,17 @@ class StrategyIndicatorRules:
         indicators: List[str] = []
         patterns: List[str] = []
         
-        # === MOMENTUM CONFIRMATIONS ===
+        # === BULLISH CONFIRMATIONS ===
         indicators.extend(self._check_momentum_bullish(row))
-        
-        # === TREND CONFIRMATIONS ===
         indicators.extend(self._check_trend_bullish(row))
-        
-        # === VOLUME CONFIRMATIONS ===
         indicators.extend(self._check_volume_bullish(row))
-        
-        # === VOLATILITY STATE ===
         indicators.extend(self._check_volatility_bullish(row))
-        
-        # === MOVING AVERAGE ALIGNMENT ===
         indicators.extend(self._check_ma_alignment_bullish(row))
-        
-        # === FIBONACCI CONFIRMATIONS ===
         indicators.extend(self._check_fibonacci_bullish(row))
-        
-        # === PRICE ACTION PATTERNS ===
         patterns.extend(self._check_price_action_bullish(row))
-        
-        # === PULLBACK PATTERNS ===
         patterns.extend(self._check_pullback_bullish(row))
-        
-        # === CANDLESTICK PATTERNS ===
         patterns.extend(self._check_candlestick_patterns(row, 'bullish'))
-        
-        # === CHART PATTERNS ===
         patterns.extend(self._check_chart_patterns(row, 'bullish'))
-        
-        # === ANOMALY DETECTION ===
         indicators.extend(self._check_anomalies_bullish(row))
         
         return indicators, patterns
@@ -245,37 +223,17 @@ class StrategyIndicatorRules:
         indicators: List[str] = []
         patterns: List[str] = []
         
-        # === MOMENTUM CONFIRMATIONS ===
+        # === BEARISH CONFIRMATIONS ===
         indicators.extend(self._check_momentum_bearish(row))
-        
-        # === TREND CONFIRMATIONS ===
         indicators.extend(self._check_trend_bearish(row))
-        
-        # === VOLUME CONFIRMATIONS ===
         indicators.extend(self._check_volume_bearish(row))
-        
-        # === VOLATILITY STATE ===
         indicators.extend(self._check_volatility_bearish(row))
-        
-        # === MOVING AVERAGE ALIGNMENT ===
         indicators.extend(self._check_ma_alignment_bearish(row))
-        
-        # === FIBONACCI CONFIRMATIONS ===
         indicators.extend(self._check_fibonacci_bearish(row))
-        
-        # === PRICE ACTION PATTERNS ===
         patterns.extend(self._check_price_action_bearish(row))
-        
-        # === PULLBACK PATTERNS ===
         patterns.extend(self._check_pullback_bearish(row))
-        
-        # === CANDLESTICK PATTERNS ===
         patterns.extend(self._check_candlestick_patterns(row, 'bearish'))
-        
-        # === CHART PATTERNS ===
         patterns.extend(self._check_chart_patterns(row, 'bearish'))
-        
-        # === ANOMALY DETECTION ===
         indicators.extend(self._check_anomalies_bearish(row))
         
         return indicators, patterns
@@ -1491,16 +1449,38 @@ class RegimeStrategyDiscovery:
             # If we have a stats analyzer, verify these indicators actually matter for this regime
             if self.stats_analyzer:
                 validated_indicators = []
-                for ind in indicators:
-                    # Strip value to get name "RSI > 55 (60.2)" -> "RSI"
-                    ind_name = ind.split(' ')[0] 
-                    # Run Kruskal-Wallis
-                    stat_result = self.stats_analyzer.analyze_numeric_factor(ind_name)
-                    if stat_result.get('significant', False): # Only keep if p < 0.05
-                        validated_indicators.append(ind)
+                for ind_str in indicators:
+                    # Extract base name: "RSI > 55" -> "rsi"
+                    ind_base = ind_str.split(' ')[0].lower()
+                    
+                    # Skip complex names or patterns for now to be safe
+                    if "pattern" in ind_base or "candlestick" in ind_base:
+                        validated_indicators.append(ind_str)
+                        continue
+
+                    # Map to potential DB columns (try exact match or '_mean' suffix)
+                    candidates = [ind_base, f"{ind_base}_mean"]
+                    
+                    is_significant = False
+                    keep_it = True  # Default to Keep if we can't test it (Permissive Mode)
+                    
+                    for col in candidates:
+                        try:
+                            # Use existing Kruskal-Wallis test from the analyzer
+                            res = self.stats_analyzer.kruskal_wallis_by_regime(col)
+                            if res and res.get('kw_pvalue') is not None:
+                                keep_it = False # We have data, so enforce significance
+                                if res['kw_pvalue'] < 0.10: # Relaxed p-value for discovery
+                                    is_significant = True
+                                    break
+                        except Exception:
+                            continue 
+                    
+                    if is_significant or keep_it:
+                        validated_indicators.append(ind_str)
                 
-                if validated_indicators:
-                    indicators = validated_indicators
+                # Replace with validated list
+                if validated_indicators: indicators = validated_indicators
 
             # Add to repository (sets auto-deduplicate)
             temp_repository[inst_key]['confirming_indicators'].update(indicators)
