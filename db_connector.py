@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import pandas as pd
+import numpy as np
 import json
 from datetime import datetime
 from typing import List, Optional
@@ -530,10 +531,12 @@ class DatabaseConnector:
             return
         
         # --- FIX: Create an explicit copy to avoid SettingWithCopyWarning ---
+        # This ensures we are modifying a standalone object, not a view/slice of the original.
         df_features = df_features.copy()
         
         # 1. Prepare data for insertion (Ensure index is in seconds for PK matching)
-        df_features['timestamp'] = df_features.index.astype(int) // 10**9
+        # Convert datetime index to integer seconds
+        df_features['timestamp'] = df_features.index.astype(np.int64) // 10**9
         df_features['pair_tf'] = pair_tf
         
         df_to_save = df_features.reset_index(drop=True)
