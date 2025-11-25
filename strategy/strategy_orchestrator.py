@@ -188,6 +188,7 @@ def run_strategy_discovery(db_connector):
                 'regime_id': regime_id,
                 'regime_context': rules.get('regime_label', 'Unknown'),
                 'trend_direction': rules.get('trend_direction', 'neutral'),
+                'pair_tf': rules.get('pair_tf', 'btc_usdt_15m'), # ✅ FIX: Pass pair_tf to backtester
                 'entry_conditions': list(rules['confirming_indicators']),
                 'patterns': list(rules['strategy_patterns']),
                 'status': 'candidate'

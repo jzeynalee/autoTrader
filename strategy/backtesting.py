@@ -115,8 +115,8 @@ class BacktestingMixin:
             losing_returns = active_returns[active_returns <= 0]
         else:
             wins = (active_returns < 0).sum()
-            winning_returns = active_returns[active_returns < 0]
-            losing_returns = active_returns[active_returns >= 0]
+            winning_returns = -active_returns[active_returns < 0]
+            losing_returns = -active_returns[active_returns >= 0]
         
         total_signals = len(active_returns)
         win_rate = wins / total_signals if total_signals > 0 else 0
