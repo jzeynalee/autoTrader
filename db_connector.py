@@ -442,14 +442,16 @@ class DatabaseConnector:
     def load_raw_ohlcv(self, pair_tf: str, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
         """
         Loads raw OHLCV data from features_data for feature calculation.
-        FIX: When limit is used, fetches the *latest* N rows, not the oldest.
+        
+        FIX: When limit is used, we must fetch the *LATEST* rows (DESC),
+        then re-sort them to ASC so indicators calculate correctly.
         """
         if not self.conn:
-            return None        
-
+            return None
+        
         try:
             if limit:
-                # Fetch LATEST rows (DESC), then sort back to ASC for processing
+                # ✅ CORRECT LOGIC: Get latest N rows, then sort chronologically
                 query = f"""
                     SELECT * FROM (
                         SELECT timestamp, open, high, low, close, volume 
@@ -460,7 +462,7 @@ class DatabaseConnector:
                     ) ORDER BY timestamp ASC;
                 """
             else:
-                # Fetch ALL rows
+                # Fetch ALL rows (only used for full recalculation)
                 query = """
                     SELECT timestamp, open, high, low, close, volume 
                     FROM features_data 

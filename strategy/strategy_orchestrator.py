@@ -177,6 +177,41 @@ def run_strategy_discovery(db_connector):
             # Create a strategy object compatible with our backtester
             if not rules.get('confirming_indicators') and not rules.get('strategy_patterns'):
                 continue
+            
+            # --- CRITICAL FIX 1: Extract pair_tf ---
+            target_pair_tf = rules.get('pair_tf', 'btc_usdt_15m') 
+            
+            # --- CRITICAL FIX 2: Determine signal_name ---
+            # The backtester needs a specific column to test as the "signal".
+            signal_candidate = None
+            
+            # Priority A: Use Price Action Patterns (Actionable Triggers)
+            if rules.get('strategy_patterns'):
+                # Take the first pattern (e.g., 'pattern_hammer')
+                signal_candidate = list(rules['strategy_patterns'])[0]
+                
+            # Priority B: Use Indicators (Trend Confirmations)
+            elif rules.get('confirming_indicators'):
+                # Extract name from string like "RSI > 55 (Strength...)"
+                raw_str = list(rules['confirming_indicators'])[0]
+                # Simple parsing to find the base indicator name
+                base_name = raw_str.split(' ')[0].lower()
+                
+                # Map readable names to DB columns
+                indicator_map = {
+                    'macd': 'macd_hist', # Histogram is the usual signal
+                    'ppo': 'ppo_hist',
+                    'adx': 'adx',
+                    'rsi': 'rsi',
+                    'stoch': 'stoch_k',
+                    'obv': 'obv',
+                    'atr': 'atr'
+                }
+                signal_candidate = indicator_map.get(base_name, base_name)
+
+            # Fallback if extraction failed
+            if not signal_candidate:
+                signal_candidate = 'close' # Safe dummy (won't trade but won't crash)
                 
             strat_entry = {
                 'id': f"PLAYBOOK_{regime_id}",
