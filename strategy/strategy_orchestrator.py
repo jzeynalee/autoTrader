@@ -220,8 +220,9 @@ def run_strategy_discovery(db_connector):
                 'regime_id': regime_id,
                 'regime_context': rules.get('regime_label', 'Unknown'),
                 'trend_direction': rules.get('trend_direction', 'neutral'),
-                'pair_tf': pair_tf,  # ✅ FIX: Passed explicitly to prevent crash
-                'direction': 'bullish' if rules.get('trend_direction') == 'bull' else 'bearish', # ✅ FIX: Added direction
+                'pair_tf': target_pair_tf,
+                'direction': 'bullish' if rules.get('trend_direction') == 'bull' else 'bearish',
+                'signal_name': signal_candidate, # ✅ FIX: Added signal_name
                 'entry_conditions': list(rules['confirming_indicators']),
                 'patterns': list(rules['strategy_patterns']),
                 'status': 'candidate'
