@@ -339,6 +339,7 @@ class FeatureEngineerOptimized:
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
         cols['macd_hist'] = df['macd'] - df['macd_signal']
+        cols['macd_mean'] = df['macd'].rolling(window=50, min_periods=1).mean()
         
         # ============ ADX (Vectorized) ============
         high_diff = df['high'].diff()
@@ -937,6 +938,7 @@ class FeatureEngineerOptimized:
         cols['ppo'] = ppo_line
         cols['ppo_signal'] = ppo_signal
         cols['ppo_hist'] = ppo_line - ppo_signal
+        cols['ppo_mean'] = cols['ppo'].rolling(window=50, min_periods=1).mean()
         
         # ============ ULTIMATE OSCILLATOR ============
         bp = df['close'] - pd.concat([df['low'], df['close'].shift(1)], axis=1).min(axis=1)
@@ -964,14 +966,23 @@ class FeatureEngineerOptimized:
         cols['bb_width'] = (cols['bb_upper'] - cols['bb_lower']) / cols['bb_middle']
         cols['bb_pct'] = (df['close'] - cols['bb_lower']) / (cols['bb_upper'] - cols['bb_lower'])
         cols['bb_bandwidth'] = cols['bb_width']
+        cols['bb_mean'] = cols['bb_middle'].rolling(window=50, min_periods=1).mean().fillna(method='bfill').fillna(0)
         
         # ============ ATR ============
         cols['atr'] = self.rma(tr, 14)
+        # Attach atr early so subsequent columns can reference it
         df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
         cols = {}
+
+        # ATR normalized to price level (ratio) — used for volatility bucketing
+        cols['atr_ratio'] = df['atr'] / df['close'].replace(0, np.nan)
+        # Rolling mean of ATR for stability / centroid calculations
+        cols['atr_mean'] = df['atr'].rolling(window=100, min_periods=1).mean()
+        cols['atr_percent'] = (df['atr'] / df['close']) * 100 
         
-        cols['atr_percent'] = (df['atr'] / df['close']) * 100
-        cols['adr'] = (df['high'] - df['low']).rolling(14).mean()
+        # Rolling mean of recent lows (used by regime SQL / low_mean references)
+        cols['low_mean'] = df['low'].rolling(window=50, min_periods=1).mean().fillna(method='bfill').fillna(0)
+
         
         # ============ KELTNER CHANNELS ============
         cols['kc_middle'] = self.ema(df['close'], 20)
@@ -1000,6 +1011,7 @@ class FeatureEngineerOptimized:
         # .cumsum() is the key. On a 1000-bar chunk, this is a stable approximation.
         volume_direction_series = pd.Series(volume_direction, index=df.index)
         cols['obv'] = volume_direction_series.cumsum().fillna(0)
+        cols['obv_mean'] = cols['obv'].rolling(window=50, min_periods=1).mean()
         
         # ============ CMF ============
         clv = ((df['close'] - df['low']) - (df['high'] - df['close'])) / (df['high'] - df['low'])
@@ -1535,6 +1547,37 @@ class FeatureEngineerOptimized:
         cols = {}
 
         cols['pullback_stage'] = classify_pullback_stage(df)
+
+        # ============ LOCAL SLOPE (for regime/trend strength) ============
+        # Compute a local slope for 'close' using a small rolling linear fit.
+        # This provides the 'local_slope' column expected by the regime mapper.
+        try:
+            def _slope_func(x):
+                # x is a numpy array with length >=1
+                if len(x) < 2:
+                    return 0.0
+                # fit degree-1 polynomial and return slope
+                return float(np.polyfit(np.arange(len(x)), x, 1)[0])
+
+            slope_window = 5
+            cols['local_slope'] = df['close'].rolling(window=slope_window, min_periods=1).apply(
+                lambda x: _slope_func(x.values), raw=False
+            )
+        except Exception:
+            # Fallback: simple difference if rolling polyfit fails for any reason
+            cols['local_slope'] = df['close'].diff().fillna(0)
+
+        # Small smoothing to remove micro-noise (optional but helps HMM/XGB)
+        cols['local_slope'] = cols['local_slope'].rolling(window=3, min_periods=1).mean()
+
+        # Ensure no inf / divide-by-zero propagates into regime models
+        # (these will be sanitized later, but add protective fill here)
+        cols['atr_ratio'] = cols.get('atr_ratio', df.get('atr', np.nan) / df['close'].replace(0, np.nan)).fillna(0)
+        cols['macd_mean'] = cols.get('macd_mean', df.get('macd', np.nan).rolling(window=50, min_periods=1).mean()).fillna(0)
+        cols['ppo_mean'] = cols.get('ppo_mean', df.get('ppo', np.nan).rolling(window=50, min_periods=1).mean()).fillna(0)
+
+        df = pd.concat([df, pd.DataFrame(cols, index=df.index)], axis=1)
+        cols = {}
 
         # ============================================================================
         # FIX: ENSURE TIMESTAMP COLUMN EXISTS (for confluence scoring)
