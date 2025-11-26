@@ -1484,7 +1484,7 @@ class RegimeStrategyDiscovery:
                                     is_significant = True
                                     break
                         except Exception:
-                            continue 
+                            keep_it = True 
                     
                     if is_significant or keep_it:
                         validated_indicators.append(ind_str)

@@ -267,10 +267,9 @@ class BacktestingMixin:
         FIXED: Dynamically gets 'pair' from strategy.
         """
         try:
-            # --- START OF FIX: DYNAMIC PAIR ---
+            # 1. Setup Data
             pair_tf = strategy.get('pair_tf', 'btc_usdt_1m')
             pair = "_".join(pair_tf.split('_')[:2])
-            # --- END OF FIX ---
 
             # Get the aligned dataframes with advanced patterns
             htf_df, ttf_df, ltf_df = self.get_mtf_dataframes(
@@ -280,17 +279,15 @@ class BacktestingMixin:
                 strategy['ltf_timeframe']
             )
             
-            if htf_df is None:
-                print(f"Warning: Could not get data for strategy {strategy.get('id')}")
-                return strategy
+            if htf_df is None: return strategy
 
             htf_df = self.optimized_detect_advanced_price_patterns(htf_df)
             ttf_df = self.optimized_detect_advanced_price_patterns(ttf_df)
             ltf_df = self.optimized_detect_advanced_price_patterns(ltf_df)
             
-            # --- Build the Signal Mask ---
+            # 2. Build the Signal Mask ---
             active_mask = pd.Series(True, index=ltf_df.index)
-            direction = strategy['direction']
+            direction = strategy.get('direction', 'bullish')
             
             # This filters out counter-trend trades which are usually low quality
             if 'trend_structure' in htf_df.columns:
@@ -351,12 +348,11 @@ class BacktestingMixin:
                             if states is not None:
                                 active_mask &= (states == 'bullish' if direction == 'bullish' else states == 'bearish')
 
-            # --- Calculate Performance ---
+            # 4. Calculate Performance ---
             active_returns = ltf_df.loc[active_mask, 'future_return']
             
             if len(active_returns) == 0:
                 strategy['backtest_win_rate'] = 0
-                strategy['backtest_total_signals'] = 0
                 return strategy
             
             if direction == 'bullish':
@@ -365,27 +361,22 @@ class BacktestingMixin:
                 losing_returns = active_returns[active_returns <= 0]
             else:
                 wins = (active_returns < 0).sum()
-                winning_returns = active_returns[active_returns < 0]
-                losing_returns = active_returns[active_returns >= 0]
+                winning_returns = -active_returns[active_returns < 0]
+                losing_returns = -active_returns[active_returns >= 0]
             
             total_signals = len(active_returns)
             win_rate = wins / total_signals if total_signals > 0 else 0
-            avg_return = active_returns.mean()
-            
+                        
             avg_win = winning_returns.mean() if len(winning_returns) > 0 else 0
             avg_loss = losing_returns.mean() if len(losing_returns) > 0 else 0
-            profit_factor = abs(winning_returns.sum() / losing_returns.sum()) if losing_returns.sum() != 0 else np.inf
             
             strategy.update({
                 'backtest_win_rate': win_rate,
                 'backtest_total_signals': int(total_signals),
-                'backtest_wins': int(wins),
-                'backtest_losses': int(total_signals - wins),
-                'avg_return': avg_return,
                 'avg_win': avg_win,
                 'avg_loss': avg_loss,
-                'profit_factor': profit_factor,
-                'performance_score': win_rate * (1 + abs(avg_return))
+                'profit_factor': winning_returns.sum() / losing_returns.sum() if losing_returns.sum() != 0 else np.inf,
+                'performance_score': win_rate * (1 + (avg_win / avg_loss if avg_loss > 0 else 0))
             })
             
             return strategy

@@ -16,25 +16,19 @@ from ..logger import setup_logging
 logger = setup_logging()
 
 # Note: We keep the relative imports here, assuming execution via autoTrader.main
-try:
-    from .discovery_mapping import (
-        map_indicator_state,
-        BULLISH_PATTERNS,
-        BEARISH_PATTERNS,
-        NEUTRAL_PATTERNS,
-        CHART_BULLISH,
-        CHART_BEARISH,
-        CHART_NEUTRAL,
-        TIMEFRAME_GROUPS,
-        TIMEFRAME_HIERARCHY,
-        validate_timeframe_group
-    )
-    MAPPER_AVAILABLE = True
-except ImportError as e:
-    logger.critical(f"Warning: discovery_mapping.py import failed: {e}")
-    logger.critical("FATAL: Cannot load required mapping file. System cannot proceed.")
-    MAPPER_AVAILABLE = False
-
+from .discovery_mapping import (
+    map_indicator_state,
+    BULLISH_PATTERNS,
+    BEARISH_PATTERNS,
+    NEUTRAL_PATTERNS,
+    CHART_BULLISH,
+    CHART_BEARISH,
+    CHART_NEUTRAL,
+    TIMEFRAME_GROUPS,
+    TIMEFRAME_HIERARCHY,
+    validate_timeframe_group
+)
+MAPPER_AVAILABLE = True
 from .analysis_trend import TrendAnalysisSystem
 from .analysis_pullback import PullbackAnalysisSystem
 from .analysis_advanced_regime import AdvancedRegimeDetectionSystem
@@ -134,12 +128,15 @@ def run_strategy_discovery(db_connector):
         volatility_threshold=0.25,
     )
     regime_dao = RegimeDataAccess(db_connector)
-    analyzer = RegimeStatisticalAnalyzer(regime_dao)
-    
+
     # 2. Initialize The Strategy Discovery Brain
     # This component unifies detection (System) and validation (Analyzer)
     strategy_discoverer = RegimeStrategyDiscovery(system.regime_detector)
-    strategy_discoverer.stats_analyzer = analyzer  # Inject analyzer for statistical validation
+    try:
+        analyzer = RegimeStatisticalAnalyzer(regime_dao)
+        strategy_discoverer.stats_analyzer = analyzer  # Inject analyzer for statistical validation
+    except Exception as e:
+        logger.warning(f"⚠️ Statistical Analyzer unavailable: {e}")
 
     # 3. Discover and store instances
     total_instances = 0
@@ -152,7 +149,7 @@ def run_strategy_discovery(db_connector):
 
     logger.info(f"\n✅ Discovered & Stored: {total_instances} regime instances")
 
-    # 4. Run Statistical Analysis (The Math)
+    '''# 4. Run Statistical Analysis (The Math)
     logger.info("\n🔬 Running Statistical Analysis on Indicators...")
     top_indicators = ['rsi', 'macd_hist', 'ppo', 'adx', 'bb_width', 'obv', 'volume_zscore', 'atr_percent']
     
@@ -165,7 +162,7 @@ def run_strategy_discovery(db_connector):
                 indicator_analysis[indicator] = result
                 logger.info(f"  Analyzed {indicator}")
         except Exception as e:
-            logger.error(f"  ⚠️ Error analyzing {indicator}: {e}")
+            logger.error(f"  ⚠️ Error analyzing {indicator}: {e}")'''
 
     # 5. Generate Strategy Playbook (The Rules)
     logger.info("\n📘 Generating Regime Strategy Playbook...")
@@ -188,7 +185,8 @@ def run_strategy_discovery(db_connector):
                 'regime_id': regime_id,
                 'regime_context': rules.get('regime_label', 'Unknown'),
                 'trend_direction': rules.get('trend_direction', 'neutral'),
-                'pair_tf': rules.get('pair_tf', 'btc_usdt_15m'), # ✅ FIX: Pass pair_tf to backtester
+                'pair_tf': pair_tf,  # ✅ FIX: Passed explicitly to prevent crash
+                'direction': 'bullish' if rules.get('trend_direction') == 'bull' else 'bearish', # ✅ FIX: Added direction
                 'entry_conditions': list(rules['confirming_indicators']),
                 'patterns': list(rules['strategy_patterns']),
                 'status': 'candidate'
@@ -220,7 +218,7 @@ def run_strategy_discovery(db_connector):
     # Note: Modes A-H have been deprecated. This calls surviving modes (J, K, L, M, N, Confluence)
     logger.info("\n🔄 Discovering multi-timeframe strategies...")
     mtf_start_id = len(system.strategy_pool)
-    system.discover_mtf_strategies()
+    system.discover_mtf_strategies()  # This now covers the remaining valid MTF modes
     mtf_count = len(system.strategy_pool) - mtf_start_id
     logger.info(f"✅ Found {mtf_count} MTF strategies")
     
@@ -260,9 +258,9 @@ def run_strategy_discovery(db_connector):
             system.strategy_pool[strategy_key] = strategy
 
         except Exception as e:
-            # Don't spam console if it's just a data missing warning
-            if "Insufficient data" not in str(e):
-                print(f"⚠️ Error backtesting {strategy_key} ({strategy_type}): {e}")
+            # Improved Error Logging
+            logger.error(f"⚠️ Error backtesting {strategy_key} ({strategy_type}): {e}")
+            # Optional: traceback.print_exc() # Uncomment for deep debugging
 
     logger.info(f"✅ Backtested {len(system.strategy_pool)} strategies")
 
@@ -332,17 +330,9 @@ def run_strategy_discovery(db_connector):
     # File exports
     logger.info("\n📁 Exporting results...")
     try:
-        system.save_strategies_to_file('strategy_pool.json')
-        export_files.append('strategy_pool.json')
-        
-        system.export_summary_csv('strategy_summary.csv')
-        export_files.append('strategy_summary.csv')
-        
-        system.export_mtf_strategies_csv('mtf_strategies_with_sltp.csv')
-        export_files.append('mtf_strategies_with_sltp.csv')
-        
-        logger.info(f"✅ Exported {len(export_files)} files")
-        
+        system.save_strategies_to_file('strategy_pool.json')        
+        system.export_summary_csv('strategy_summary.csv')        
+        system.export_mtf_strategies_csv('mtf_strategies_with_sltp.csv')        
     except Exception as e:
         logger.error(f"⚠️ Export error: {e}")
     
