@@ -181,9 +181,9 @@ def run_strategy_discovery(db_connector):
             # --- CRITICAL FIX 1: Extract pair_tf ---
             target_pair_tf = rules.get('pair_tf', 'btc_usdt_15m') 
             
-            # --- CRITICAL FIX 2: Determine signal_name ---
+            # --- CRITICAL FIX: Determine signal_name ---
             # The backtester needs a specific column to test as the "signal".
-            signal_candidate = None
+            signal_candidate = 'close' #DEFAULT FALLBACK
             
             # Priority A: Use Price Action Patterns (Actionable Triggers)
             if rules.get('strategy_patterns'):
