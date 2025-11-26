@@ -101,29 +101,29 @@ def run_risk_pillar():
 # --- SEQUENTIAL INITIALIZATION PIPELINE ---
 
 def run_initialization_sequence(db):
-    """
-    Performs the mandatory 'Cold Start' sequence.
-    System cannot trade until this completes successfully.
-    """
     print("\n" + "="*60)
     print("🏗️  SYSTEM INITIALIZATION PIPELINE (COLD START)")
     print("="*60)
 
-    # STEP 1: INGESTION (Get the Raw Data)
+    # STEP 1: INGESTION
     print("\n[Step 1/3] 📥 Historical Data Ingestion...")
     ingestion = DataIngestionSystem(db_connector=db)
     ingestion.start_historical_ingestion()
     print("✅ Ingestion Complete.")
 
-    # STEP 2: ENGINEERING (Calculate the Indicators)
+    # STEP 2: ENGINEERING
     print("\n[Step 2/3] ⚙️  Feature Engineering...")
     fe = FeatureEngineer(db_connector=db)
     fe.calculate_and_save_all_features()
     print("✅ Feature Engineering Complete.")
 
-    # STEP 3: DISCOVERY (Build the Brain)
+    # CRITICAL FIX: Refresh Connection so schema changes (new cols) are visible
+    print("🔄 Refreshing Database Connection...")
+    db.close()
+    db.connect()
+
+    # STEP 3: DISCOVERY
     print("\n[Step 3/3] 🧠 Strategy Discovery & Backtesting...")
-    # This generates strategy_pool.json
     run_strategy_discovery(db_connector=db) 
     print("✅ Strategy Discovery Complete.")
     

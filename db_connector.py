@@ -1,15 +1,15 @@
 # db_connector.py
+
 import os
 import sqlite3
 import pandas as pd
-import numpy as np
 import json
+import numpy as np
 from datetime import datetime
 from typing import List, Optional
 
 # Local Imports
 from .models import Signal, TradeDirection, OrderSide, Trade
-
 
 class DatabaseConnector:
     """
@@ -18,7 +18,6 @@ class DatabaseConnector:
     """
     
     def __init__(self, db_path: str = None):
-        # If no path provided, try to load from config, otherwise use default
         if db_path is None:
             try:
                 from .config import get_db_path
@@ -27,41 +26,19 @@ class DatabaseConnector:
                 self.db_path = './data/auto_trader_db.sqlite'
         else:
             self.db_path = db_path
-        # Ensure directory exists
+        
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)        
         self.conn = None
         self.connect()
         self.create_tables()
 
-
-    def save_trade(self, trade: Trade):
-        """Persists a Trade object to the database."""
-        query = """
-        INSERT OR REPLACE INTO positions (
-            position_id, strategy_id, pair, direction,
-            entry_price, size, stop_loss, take_profit, 
-            status, open_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        # Map Trade object fields to DB columns
-        params = (
-            trade.trade_id, trade.strategy_id, trade.symbol, trade.direction.value,
-            trade.entry_price, trade.quantity, trade.stop_loss, trade.take_profit,
-            trade.status.value, trade.entry_time
-        )
-        self.execute(query, params)
-
     def connect(self):
         """Establishes connection with optimizations for concurrency."""
         try:
-            # check_same_thread=False allows this connection to be used in the specific thread/process it was created in
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
             self.conn.row_factory = sqlite3.Row
-            
-            # Enable Write-Ahead Logging (WAL) for better concurrency
             self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA synchronous=NORMAL;")
-            
         except sqlite3.Error as e:
             print(f"❌ Database connection failed: {e}")
             self.conn = None
@@ -69,50 +46,39 @@ class DatabaseConnector:
     def close(self):
         if self.conn:
             self.conn.close()
+            self.conn = None
 
     def execute(self, query: str, params: tuple = None, fetch: bool = False):
+        """
+        Executes a SQL query safely.
+        FIXED: Removed duplicate execution logic.
+        """
         if not self.conn: return None
         try:
             cursor = self.conn.cursor()
-            if params: cursor.execute(query, params)
-            else: cursor.execute(query)
-            
-            if fetch: return cursor.fetchall()
-            self.conn.commit()
-        except sqlite3.Error as e:
-            print(f"❌ SQL Error: {e}")
-            return None
-        
-        try:
             if params:
                 cursor.execute(query, params)
             else:
                 cursor.execute(query)
             
             if fetch:
-                # For SELECT queries, fetch all results
-                # .fetchall() returns a list of row objects
                 return cursor.fetchall()
             else:
-                # For INSERT/UPDATE/DELETE, commit the transaction
                 self.conn.commit()
                 return None
-                
         except sqlite3.Error as e:
-            print(f"❌ Error executing query: {e}")
-            print(f"   Query: {query}")
+            # Only print critical errors, ignore benign "exists" errors if needed
+            print(f"❌ SQL Error: {e}")
+            # print(f"   Query: {query}") # Uncomment for deep debugging
             return None
-    
+
     def create_tables(self):
         """Creates the necessary database tables if they don't exist."""
-        if not self.conn:
-            return
+        if not self.conn: return
         
         cursor = self.conn.cursor()
         
-        # --- 1. features_data (Stores raw OHLCV and calculated features) ---
-        # Note: We keep a limited set of placeholder columns for features, 
-        # but the table must support dynamic additions for feature_engineering.
+        # 1. features_data
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS features_data (
                 timestamp INTEGER NOT NULL,
@@ -122,14 +88,11 @@ class DatabaseConnector:
                 low REAL,
                 close REAL,
                 volume REAL,
-                rsi REAL, 
-                macd_hist REAL,
-                trend_structure TEXT,
                 PRIMARY KEY (timestamp, pair_tf)
             );
         """)
 
-        # --- 2. strategies_master (Stores final strategy definitions) ---
+        # 2. strategies_master
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS strategies_master (
                 strategy_id TEXT PRIMARY KEY,
@@ -137,12 +100,12 @@ class DatabaseConnector:
                 pair_tf TEXT,
                 performance_score REAL,
                 win_rate REAL,
-                parameters_json TEXT, -- Full strategy definition
-                sl_tp_json TEXT,     -- Final stop/target plan
+                parameters_json TEXT,
+                sl_tp_json TEXT,
                 last_backtest_date TEXT
             );
         """)
-        # --- 3. strategy_playbook (Stores regime-based playbook) ---
+        # 3. strategy_playbook
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS strategy_playbook (
                 regime_name TEXT PRIMARY KEY,
@@ -154,7 +117,7 @@ class DatabaseConnector:
                 last_updated TEXT
             );
         """)
-        # --- 4. regime_instances (Stores regime instance master records) ---
+        # 4. regime_instances
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS regime_instances (
                 instance_id TEXT PRIMARY KEY,
@@ -203,8 +166,7 @@ class DatabaseConnector:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-       
-        # --- 5. regime_confirming_indicators ---
+        # 5. regime_confirming_indicators
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS regime_confirming_indicators (
                 instance_id TEXT NOT NULL,
@@ -219,8 +181,7 @@ class DatabaseConnector:
                 FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
             );
         """)
-        
-        # --- 6. regime_candlestick_patterns ---
+        # 6. regime_candlestick_patterns
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS regime_candlestick_patterns (
                 instance_id TEXT NOT NULL,
@@ -231,8 +192,7 @@ class DatabaseConnector:
                 FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
             );
         """)
-        
-        # --- 7. regime_price_action_patterns ---
+        # 7. regime_price_action_patterns
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS regime_price_action_patterns (
                 instance_id TEXT NOT NULL,
@@ -242,8 +202,7 @@ class DatabaseConnector:
                 FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
             );
         """)
-        
-        # --- 8. regime_chart_patterns ---
+        # 8. regime_chart_patterns
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS regime_chart_patterns (
                 instance_id TEXT NOT NULL,
@@ -252,7 +211,6 @@ class DatabaseConnector:
                 FOREIGN KEY (instance_id) REFERENCES regime_instances(instance_id)
             );
         """)
-
         # 9. Statistical Experiments
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS statistical_experiments (
@@ -265,7 +223,7 @@ class DatabaseConnector:
                 run_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # 10. : Positions Table for Pillar 3 (Risk Manager)
+        # 10. Positions
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 position_id TEXT PRIMARY KEY,
@@ -275,12 +233,11 @@ class DatabaseConnector:
                 size REAL,
                 stop_loss REAL,
                 take_profit REAL,
-                status TEXT, -- 'OPEN', 'CLOSED'
+                status TEXT,
                 open_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         
-        # Create indexes for performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_pair_tf ON regime_instances(pair, timeframe);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_start ON regime_instances(start_time);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_structure ON regime_instances(dominant_structure);")
@@ -289,39 +246,30 @@ class DatabaseConnector:
         self.conn.commit()
 
     def _get_current_columns(self, table_name: str) -> List[str]:
-        """Retrieves current column names from a table."""
-        if not self.conn: 
-            return
+        if not self.conn: return []
         cursor = self.conn.execute(f"PRAGMA table_info({table_name});")
         return [col[1] for col in cursor.fetchall()]
 
     def _check_and_add_columns(self, df: pd.DataFrame, table_name: str):
         """Dynamically adds missing columns to the SQLite table schema."""
-        if not self.conn or df.empty:
-            return
+        if not self.conn or df.empty: return
             
         current_columns = self._get_current_columns(table_name)
         df_columns = df.columns.tolist()
-        
         missing_columns = [col for col in df_columns if col not in current_columns]
         
         if missing_columns:
             print(f"⚠️ Detected {len(missing_columns)} new feature columns. Altering table...")
             cursor = self.conn.cursor()
-            
             for col in missing_columns:
-                # Infer the SQLite type based on the Pandas Dtype (REAL for floats/ints, TEXT for objects)
                 dtype = df[col].dtype
                 sql_type = 'TEXT' if pd.api.types.is_object_dtype(dtype) else 'REAL'
-                
                 try:
                     cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type};")
                     print(f"   + Added column: {col} ({sql_type})")
                 except sqlite3.OperationalError as e:
-                    # Catch scenarios where column was added by another process thread
                     if "duplicate column name" not in str(e):
                         print(f"   ❌ Failed to add column {col}: {e}")
-            
             self.conn.commit()
 
     # ========================================================================
