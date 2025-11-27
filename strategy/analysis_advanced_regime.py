@@ -818,7 +818,7 @@ class AdvancedRegimeDetectionSystem:
         import re
         # Replace whitespace and slashes with underscore
         s = str(label).strip().replace('/', '_').replace('\\', '_') # spaces -> underscore
-        s = re.sub(r'[^A-Za-z0-9_\-]', '', "_".join(s.split())) # Remove characters that are not alphanumeric, dash, or underscore
+        s = re.sub(r'[^A-Za-z0-9_-]', '', "_".join(s.split())) # Remove characters that are not alphanumeric, dash, or underscore
         
         return s if s else "Regime"
 
