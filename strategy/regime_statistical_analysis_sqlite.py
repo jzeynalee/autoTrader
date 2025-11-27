@@ -50,22 +50,14 @@ import itertools
 import math
 
 # Optional dependencies
-try:
-    import statsmodels.api as sm
-    import statsmodels.stats.multicomp as multi
-    from statsmodels.stats.multitest import multipletests
-    STATSMODELS = True
-except Exception:
-    STATSMODELS = False
-
-try:
-    import shap
-    SHAP_AVAILABLE = True
-except Exception:
-    SHAP_AVAILABLE = False
+import statsmodels.api as sm
+import statsmodels.stats.multicomp as multi
+from statsmodels.stats.multitest import multipletests
+STATSMODELS = True
+import shap
+SHAP_AVAILABLE = True
 
 from ..logger import setup_logging
-
 # Initialize global logger (can be reconfigured)
 logger = setup_logging()
 
