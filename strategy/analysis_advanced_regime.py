@@ -381,6 +381,7 @@ class GaussianHMMRegimeClassifier:
     def fit(self, swing_df: pd.DataFrame) -> None:
         """
         Fit HMM model on swing registry features with stability safeguards.
+        Changed to overcome some bottlenecks.
         """
         # Select continuous features for HMM
         self.feature_columns = [
