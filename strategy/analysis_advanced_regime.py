@@ -19,10 +19,7 @@ Architecture:
 
 import pandas as pd
 import numpy as np
-import uuid
 import warnings
-import logging
-import os
 from scipy import stats
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
@@ -31,62 +28,16 @@ from datetime import datetime
 from ..logger import setup_logging
 logger = setup_logging()
 
-# ML Libraries
-try:
-    from hmmlearn.hmm import GaussianHMM
-    HMM_AVAILABLE = True
-except ImportError:
-    HMM_AVAILABLE = False
-    logger.info("Warning: hmmlearn not available. Install with: pip install hmmlearn")
-
-try:
-    import xgboost as xgb
-    XGB_AVAILABLE = True
-except ImportError:
-    XGB_AVAILABLE = False
-    logger.info("Warning: xgboost not available. Install with: pip install xgboost")
-
-try:
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import train_test_split
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    logger.info("Warning: scikit-learn not available. Install with: pip install scikit-learn")
-
-warnings.filterwarnings('ignore', category=FutureWarning)
-warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision loss occurred.*')
-
-
-
 # ============================================================================
 # ML LIBRARY IMPORTS WITH LOGGING
 # ============================================================================
-
-try:
-    from hmmlearn.hmm import GaussianHMM
-    HMM_AVAILABLE = True
-    logger.info("✓ hmmlearn library loaded successfully")
-except ImportError:
-    HMM_AVAILABLE = False
-    logger.error("✗ hmmlearn not available. Install with: pip install hmmlearn")
-
-try:
-    import xgboost as xgb
-    XGB_AVAILABLE = True
-    logger.info("✓ xgboost library loaded successfully")
-except ImportError:
-    XGB_AVAILABLE = False
-    logger.error("✗ xgboost not available. Install with: pip install xgboost")
-
-try:
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import train_test_split
-    SKLEARN_AVAILABLE = True
-    logger.info("✓ scikit-learn library loaded successfully")
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    logger.error("✗ scikit-learn not available. Install with: pip install scikit-learn")
+from hmmlearn.hmm import GaussianHMM
+HMM_AVAILABLE = True
+import xgboost as xgb
+XGB_AVAILABLE = True
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+SKLEARN_AVAILABLE = True
 
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision loss occurred.*')
@@ -94,7 +45,6 @@ warnings.filterwarnings('ignore', category=RuntimeWarning, message='Precision lo
 # ============================================================================
 # SECTION 1: DATA STRUCTURES
 # ============================================================================
-
 
 @dataclass
 class SwingPoint:
@@ -430,10 +380,7 @@ class GaussianHMMRegimeClassifier:
     
     def fit(self, swing_df: pd.DataFrame) -> None:
         """
-        Fit HMM model on swing registry features.
-        
-        Args:
-            swing_df: DataFrame from HybridSwingRegistry.to_dataframe()
+        Fit HMM model on swing registry features with stability safeguards.
         """
         # Select continuous features for HMM
         self.feature_columns = [
@@ -443,24 +390,45 @@ class GaussianHMMRegimeClassifier:
             'volume_roc', 'obv_change', 'volume_zscore'
         ]
         
-        # Extract and prepare features
-        X = swing_df[self.feature_columns].fillna(0).values
+        # 1. Handle NaNs with mean substitution instead of 0 to avoid singularities
+        X_df = swing_df[self.feature_columns]
+        X = X_df.fillna(X_df.mean()).fillna(0).values 
         
         # Standardize features
         if self.scaler is not None:
             X_scaled = self.scaler.fit_transform(X)
         else:
             X_scaled = X
+            
+        # 2. Attempt 'full' covariance with regularization (min_covar)
+        # min_covar=1e-3 prevents the "divide by zero" variance crash
+        try:
+            logger.info("Attempting HMM fit with Full Covariance...")
+            self.model = GaussianHMM(
+                n_components=self.n_regimes,
+                covariance_type='full',
+                min_covar=1e-3,       # <--- CRITICAL FIX FOR CONVERGENCE
+                n_iter=100,
+                random_state=self.random_state,
+                verbose=False
+            )
+            self.model.fit(X_scaled)
+            
+        except Exception as e:
+            logger.warning(f"HMM 'full' covariance failed ({str(e)}). Falling back to 'diag'.")
+            
+            # 3. Fallback: Diagonal Covariance (More stable, less correlated)
+            self.model = GaussianHMM(
+                n_components=self.n_regimes,
+                covariance_type='diag', # <--- Simpler model if full fails
+                min_covar=1e-3,
+                n_iter=100,
+                random_state=self.random_state,
+                verbose=False
+            )
+            self.model.fit(X_scaled)
         
-        # Fit HMM
-        self.model = GaussianHMM(
-            n_components=self.n_regimes,
-            covariance_type='full',
-            n_iter=100,
-            random_state=self.random_state
-        )
-        
-        self.model.fit(X_scaled)
+        logger.info(f"HMM converged with score: {self.model.score(X_scaled):.2f}")
         
         # Build regime state objects
         self._build_regime_states()
