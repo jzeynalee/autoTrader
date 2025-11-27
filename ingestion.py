@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 # Assuming db_connector is available via relative import from the parent package
 # and config.env constants are handled elsewhere or loaded here (using placeholders)
 from .db_connector import DatabaseConnector # Assumes DBConnector is available
+from .logger import setup_logging
+logger = setup_logging()
 
 # --- Configuration Placeholders (In a real app, these come from config.env) ---
 API_BASE_URL = "https://api.lbkex.com/v2/kline.do"
@@ -25,62 +27,42 @@ PAIRS_TO_FETCH = ['btc_usdt', 'eth_usdt', 'sol_usdt', 'trx_usdt', 'doge_usdt']
 TIME_FRAMES = {'1m': 'minute1', '5m': 'minute5', '15m': 'minute15', '1h': 'hour1', '4h': 'hour4'}
 MAX_LIMIT = 2000
 DAYS_HISTORICAL = 365 # Default for initial setup
-# ----------------------------------------------------------------------------
 
 
 class DataIngestionSystem:
     """
-    Manages historical REST API ingestion, WebSocket streaming, and fallback logic 
-    to ensure the features_data table has fresh, accurate OHLCV data.
+    Manages historical REST API ingestion with pagination to ensure full data coverage.
     """
     def __init__(self, db_connector: DatabaseConnector):
         self.db = db_connector
         self.pairs = PAIRS_TO_FETCH
         self.timeframes = TIME_FRAMES
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10) # For REST calls
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
     def get_last_timestamp(self, pair_tf: str) -> Optional[int]:
-        """
-        Retrieves the last known timestamp (in seconds) for a pair_tf from the database.
-        
-        Note: This relies on the db_connector having a load_last_timestamp(pair_tf) method.
-        """
         try:
-            # We assume a load_last_timestamp method exists in DatabaseConnector
             last_ts = self.db.load_last_timestamp(pair_tf)
-            return last_ts # Should return timestamp in seconds (int)
-        except AttributeError:
-            print("CRITICAL: DatabaseConnector is missing load_last_timestamp method.")
-            return None
+            return last_ts 
         except Exception as e:
             print(f"Error checking last timestamp for {pair_tf}: {e}")
             return None
 
-    # =========================================================================
-    # A. HISTORICAL DATA INGESTION (REST API)
-    # =========================================================================
-
     def _fetch_klines_rest(self, symbol, timeframe, time_type, start_time_s: int):
-        """
-        Fetches K-line data via REST API starting from a specific timestamp.
-        """
-        
+        """Fetches a single batch of K-line data."""
         # Ensure we don't request data from the future
         end_time = int(time.time())
         if start_time_s >= end_time:
-             print(f"    Skipping {symbol} {timeframe}: Database is up-to-date.")
              return []
 
         params = {
             'symbol': symbol,
             'type': time_type,
             'size': MAX_LIMIT,
-            'time': start_time_s # Use provided start time
+            'time': start_time_s
         }
         
         try:
-            print(f"  Requesting {symbol}_{timeframe} from: {datetime.fromtimestamp(start_time_s)}")
-            
+            # print(f"  Requesting {symbol}_{timeframe} from: {datetime.fromtimestamp(start_time_s)}")
             response = requests.get(API_BASE_URL, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
@@ -88,7 +70,6 @@ class DataIngestionSystem:
             if data.get('result') == 'true' and 'data' in data and data['data']:
                 return data['data']
             else:
-                print(f"    ✗ API Error for {symbol} {timeframe}: {data.get('msg', 'Unknown')}")
                 return []
                 
         except Exception as e:
@@ -101,103 +82,124 @@ class DataIngestionSystem:
             return 0
 
         df = pd.DataFrame(raw_data)
-        
-        if df.empty:
-            return 0
+        if df.empty: return 0
         
         # LBANK API returns timestamp in seconds (column 0)
-        df = df.rename(columns={
-            0: 'timestamp_s', 
-            1: 'open',
-            2: 'high',
-            3: 'low',
-            4: 'close',
-            5: 'volume'
-        })
+        df = df.rename(columns={0: 'timestamp_s', 1: 'open', 2: 'high', 3: 'low', 4: 'close', 5: 'volume'})
         
-        # Clean and prepare for DB
         df = df.drop_duplicates(subset=['timestamp_s'])
         df = df[df['timestamp_s'] > 0]
 
         pair_tf_key = f"{symbol}_{timeframe}"
         df['pair_tf'] = pair_tf_key
         
-        # Prepare for bulk UPSERT (We only save OHLCV + required columns)
         df_to_save = df[['timestamp_s', 'pair_tf', 'open', 'high', 'low', 'close', 'volume']]
         
+        # Filter strictly newer data
         last_ts_in_db = self.get_last_timestamp(pair_tf_key) 
-
         if last_ts_in_db is not None:
-            # We filter to keep only data that is STRICTLY newer than the last known bar.
             df_to_save = df_to_save[df_to_save['timestamp_s'] > last_ts_in_db]
 
         if df_to_save.empty:
-            # The API successfully returned data, but it was all old/redundant data.
-            # This is a successful incremental check, but zero new bars were saved.
             return 0
         
-        # We use timestamp_s as the PRIMARY KEY (PK) integer value
         self.db.upsert_raw_ohlcv(df_to_save, f"{symbol}_{timeframe}")
-
         return len(df_to_save)
+
+    def _ingest_pair_history_worker(self, pair, tf, time_type, start_time_s):
+        """
+        Worker function that LOOPS until data is fully caught up to current time.
+        """
+        total_saved_for_pair = 0
+        current_time_s = int(time.time())
+        pair_tf = f"{pair}_{tf}"
+        
+        print(f"  🚀 Starting ingestion for {pair_tf} from {datetime.fromtimestamp(start_time_s)}")
+
+        while True:
+            # 1. Check if we reached the present
+            if start_time_s >= current_time_s:
+                break
+            
+            # 2. Fetch Batch
+            data = self._fetch_klines_rest(pair, tf, time_type, start_time_s)
+            
+            if not data:
+                # If no data returned, we might be up to date or API has no data for this range
+                # Check if start_time is very recent
+                if current_time_s - start_time_s < 3600: # Within 1 hour
+                    break
+                else:
+                    print(f"    ⚠️ No data for {pair_tf} at {start_time_s}. Retrying or skipping...")
+                    break
+            
+            # 3. Save Batch
+            saved_count = self._process_and_save_data(data, pair, tf)
+            total_saved_for_pair += saved_count
+            
+            if saved_count > 0:
+                # Log progress every batch
+                pass 
+                # print(f"    -> {pair_tf}: Saved {saved_count} bars. Head: {data[0][0]}")
+
+            # 4. Pagination Logic
+            # Get the timestamp of the LAST candle in the batch
+            last_candle_ts = int(data[-1][0])
+            
+            # If we received fewer items than the limit, we are likely at the end of history
+            if len(data) < MAX_LIMIT:
+                break
+            
+            # Calculate next start time
+            if last_candle_ts > start_time_s:
+                start_time_s = last_candle_ts + 1
+            else:
+                # Fallback: advance strictly by 1 second to avoid infinite loop on duplicate data
+                start_time_s += 1
+                
+            # Rate limiting
+            time.sleep(0.15)
+
+        print(f"  ✅ Complete: {pair_tf} | Total Bars Added: {total_saved_for_pair}")
+        return total_saved_for_pair
 
     def start_historical_ingestion(self):
         """
-        Main entry point for historical data ingestion. Determines start time 
-        based on last database timestamp for incremental loading.
+        Main entry point using ThreadPool to ingest all pairs concurrently with pagination.
         """
-        print("\n--- A1. Starting Incremental REST Ingestion ---")
+        print("\n--- A1. Starting Incremental REST Ingestion (Full Catch-up) ---")
         
         tasks = []
-        total_saved_rows = 0
         current_time_s = int(time.time())
 
         for pair in self.pairs:
             for tf, time_type in self.timeframes.items():
                 pair_tf = f"{pair}_{tf}"
                 
-                # 1. Check Database for last timestamp
                 last_ts = self.db.load_last_timestamp(pair_tf)
                 
                 if last_ts is not None:
-                    # Increment last timestamp by 1 second to fetch the next bar onwards
                     start_time_s = last_ts + 1
-                    time_source = f"DB (Last TS: {datetime.fromtimestamp(last_ts)})"
                 else:
-                    # Database empty: fetch a full year
                     start_time_s = current_time_s - (DAYS_HISTORICAL * 24 * 60 * 60)
-                    time_source = f"FULL YEAR (Start: {datetime.fromtimestamp(start_time_s)})"
                 
-                print(f"  {pair_tf}: Source: {time_source}")
-                
-                # 2. Add task for concurrent REST API call
                 tasks.append((pair, tf, time_type, start_time_s))
 
-        # 3. Execute tasks concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        # Run tasks
+        total_rows = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_task = {
-                executor.submit(
-                    self._fetch_klines_rest, pair, tf, time_type, start_time_s
-                ): (pair, tf)
-                for pair, tf, time_type, start_time_s in tasks
+                executor.submit(self._ingest_pair_history_worker, p, tf, tt, s): (p, tf)
+                for p, tf, tt, s in tasks
             }
 
             for future in concurrent.futures.as_completed(future_to_task):
-                pair, tf = future_to_task[future]
                 try:
-                    raw_data = future.result()
-                    
-                    if raw_data:
-                        saved_count = self._process_and_save_data(raw_data, pair, tf)
-                        total_saved_rows += saved_count
-                        if saved_count > 0:
-                            print(f"  ✅ Saved {saved_count} bars for {pair}_{tf}")
-                        # If saved_count is 0, print logic is handled inside fetcher/process methods
-                    
+                    total_rows += future.result()
                 except Exception as exc:
-                    print(f"  ❌ Task failed for {pair}_{tf}: {exc}")
+                    print(f"  ❌ Worker failed: {exc}")
 
-        print(f"\n--- A1. Historical Ingestion Complete. Total Bars Saved: {total_saved_rows} ---")
+        print(f"\n--- A1. Ingestion Complete. Total Bars Saved: {total_rows} ---")
 
     # =========================================================================
     # B. REAL-TIME AND FALLBACK (WEBSOCKET/REST)
