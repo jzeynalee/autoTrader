@@ -11,7 +11,7 @@ import os
 # Import your existing modules
 from analysis_advanced_regime import AdvancedRegimeDetectionSystem
 from regime_instance_engine import RegimeInstanceEngine
-from regime_data_access import RegimeDataAccess
+from regime_data_access_sqlite import RegimeDataAccess
 
 def export_btc_data_for_statistics(
     df: pd.DataFrame,
