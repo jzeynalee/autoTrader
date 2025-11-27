@@ -96,15 +96,10 @@ class FeatureEngineerOptimized:
     
     def calculate_and_save_all_features(self):
         """
-        Smarter "catch-up" calculation (replaces "Full Calculation Mode").
-        
-        - If a pair has NO features, calculates all of them.
-        - If a pair HAS features, calculates only the new ones since the last run.
-        
-        *** REQUIRES: db.count_features(pair_tf) and db.count_raw_rows(pair_tf) ***
+        Smarter "catch-up" calculation with BATCHING for massive updates.
         """
         print("\n" + "="*80)
-        print("FEATURE ENGINEERING STARTING: Smart Calculation Mode")
+        print("FEATURE ENGINEERING STARTING: Smart Batch Mode")
         print("="*80)
         
         try:
@@ -118,90 +113,133 @@ class FeatureEngineerOptimized:
             return
         
         processed_count = 0
+        
+        # Define a safe batch size to prevent RAM explosion
+        # 25,000 rows per batch is a safe balance for most machines
+        BATCH_SIZE = 25000 
+        
         for pair_tf in all_pair_tfs:
             print(f"Processing features for {pair_tf}...")
 
-            # --- NEW SMART LOGIC ---
+            # 1. Check counts
             try:
-                # 1. Check for existing features
                 feature_count = self.db.count_features(pair_tf) 
-                # 2. Check total raw rows
                 raw_count = self.db.count_raw_rows(pair_tf)
-            except AttributeError as e:
-                print(f"❌ DBConnector is missing a required method: {e}")
-                print("   Please add `count_features` and `count_raw_rows` to your DBConnector.")
-                print("   Falling back to legacy full calculation for this pair.")
-                feature_count = 0
-                #raw_count = len(self.db.load_raw_ohlcv(pair_tf) or [])
+            except AttributeError:
+                # Fallback if DB method missing
                 df_raw = self.db.load_raw_ohlcv(pair_tf)
                 raw_count = len(df_raw) if df_raw is not None else 0
+                feature_count = 0
 
             if raw_count < 50:
                 print(f"⚠️ Skipping {pair_tf}: Insufficient raw data ({raw_count} rows).")
                 continue
             
-            # 3. Decide on full vs. incremental
-            df_to_process = None
+            # 2. Determine work needed
             new_rows_count = 0
             is_incremental = False
             
             if feature_count == 0:
-                # --- FIRST RUN / FULL RUN ---
-                print(f"  No features found. Performing full calculation for {raw_count} rows.")
-                df_to_process = self.db.load_raw_ohlcv(pair_tf) # Load ALL
+                # Full calculation needed
+                new_rows_count = raw_count
                 is_incremental = False
-            
+                print(f"  No features found. Performing full calculation for {raw_count} rows.")
             elif raw_count > feature_count:
-                # --- INCREMENTAL CATCH-UP ---
+                # Catch-up needed
                 new_rows_count = raw_count - feature_count
-                # Load only the data needed: lookback + new rows
-                rows_to_load = self.MAX_LOOKBACK + new_rows_count
-                
-                print(f"  Found {feature_count} existing features. Calculating {new_rows_count} new rows.")
-                print(f"  Loading last {rows_to_load} raw rows for calculation...")
-                
-                df_to_process = self.db.load_raw_ohlcv(pair_tf, limit=rows_to_load)
                 is_incremental = True
-
-                # Sanity check
-                if df_to_process is None or len(df_to_process) < self.MAX_LOOKBACK:
-                     print(f"⚠️  Loaded data ({len(df_to_process) if df_to_process is not None else 0}) is less than lookback ({self.MAX_LOOKBACK}).")
-                     print("   Falling back to full calculation.")
-                     df_to_process = self.db.load_raw_ohlcv(pair_tf) # Load ALL
-                     is_incremental = False
-                     new_rows_count = 0
-            
+                print(f"  Found {feature_count} existing features. Catching up {new_rows_count} rows.")
             else:
-                # --- UP-TO-DATE ---
-                print(f"✅ Features are already up-to-date for {pair_tf} ({feature_count} rows).")
+                print(f"✅ Features up-to-date ({feature_count} rows).")
                 processed_count += 1
                 continue
+
+            # 3. Load Data
+            # If the dataset is massive, we still load the raw data (lightweight),
+            # but we process features (heavy) in chunks.
+            rows_to_load = self.MAX_LOOKBACK + new_rows_count
             
-            # 4. Process
-            if df_to_process is None or df_to_process.empty:
-                print(f"⚠️ Skipping {pair_tf}: No data loaded for processing.")
-                continue
-                
+            # Safety cap for logs: only print if not huge
+            if rows_to_load < 100000:
+                print(f"  Loading last {rows_to_load} raw rows...")
+            else:
+                print(f"  Loading massive dataset ({rows_to_load} rows)... please wait.")
+
+            df_to_process = self.db.load_raw_ohlcv(pair_tf, limit=rows_to_load)
+
+            if df_to_process is None or len(df_to_process) < self.MAX_LOOKBACK:
+                 print(f"⚠️ Insufficient data loaded. Skipping.")
+                 continue
+
+            # 4. Processing Logic (with Batching)
+            import gc # Garbage collector interface
+            
             try:
-                df_features = self.calculate_indicators(df_to_process)
-                df_features = self._sanitize_column_names(df_features)
-                
-                if is_incremental:
-                    # Save only the new rows
-                    df_to_save = df_features.tail(new_rows_count)
-                    print(f"  Appending {len(df_to_save)} new feature rows...")
-                    self.db.update_features(df_to_save, pair_tf) # Assumes this appends
-                else:
-                    # Save everything (full run)
-                    print(f"  Saving {len(df_features)} feature rows (full)...")
-                    self.db.update_features(df_features, pair_tf) # Assumes this overwrites/replaces
+                # If the job is small, do it in one go
+                if new_rows_count <= BATCH_SIZE:
+                    df_features = self.calculate_indicators(df_to_process)
+                    df_features = self._sanitize_column_names(df_features)
                     
+                    if is_incremental:
+                        df_to_save = df_features.tail(new_rows_count)
+                        self.db.update_features(df_to_save, pair_tf)
+                    else:
+                        self.db.update_features(df_features, pair_tf)
+                    print(f"✅ Updated {new_rows_count} rows.")
+                
+                else:
+                    # --- BATCH PROCESSING ---
+                    print(f"  ⚠️ Large dataset detected. Processing in batches of {BATCH_SIZE}...")
+                    
+                    # We need to process the 'new' part of df_to_process in chunks.
+                    # df_to_process structure: [Lookback Data] + [New Data to Process]
+                    
+                    # Start index of the 'new' data within df_to_process
+                    start_index_of_new = len(df_to_process) - new_rows_count
+                    
+                    total_batches = (new_rows_count // BATCH_SIZE) + 1
+                    
+                    for i in range(total_batches):
+                        # Determine slice indices relative to df_to_process
+                        batch_start_rel = start_index_of_new + (i * BATCH_SIZE)
+                        batch_end_rel = min(start_index_of_new + ((i + 1) * BATCH_SIZE), len(df_to_process))
+                        
+                        current_batch_size = batch_end_rel - batch_start_rel
+                        if current_batch_size <= 0: break
+                        
+                        # We must include lookback for THIS batch
+                        # Slice from: (batch_start - LOOKBACK) to (batch_end)
+                        calc_start = max(0, batch_start_rel - self.MAX_LOOKBACK)
+                        calc_end = batch_end_rel
+                        
+                        df_chunk = df_to_process.iloc[calc_start:calc_end].copy()
+                        
+                        print(f"    Batch {i+1}/{total_batches}: Calculating {current_batch_size} rows...")
+                        
+                        # Calculate features for this chunk
+                        df_chunk_features = self.calculate_indicators(df_chunk)
+                        df_chunk_features = self._sanitize_column_names(df_chunk_features)
+                        
+                        # Extract ONLY the new calculated rows for saving
+                        # (The last 'current_batch_size' rows)
+                        df_to_save = df_chunk_features.tail(current_batch_size)
+                        
+                        # Save immediately
+                        self.db.update_features(df_to_save, pair_tf)
+                        
+                        # Memory cleanup
+                        del df_chunk
+                        del df_chunk_features
+                        del df_to_save
+                        gc.collect() 
+                        
+                    print(f"✅ Batch processing complete for {pair_tf}")
+
                 processed_count += 1
-                print(f"✅ Features updated successfully for {pair_tf}.")
 
             except Exception as e:
                 import traceback
-                print(f"❌ Error processing features for {pair_tf}: {e}")
+                print(f"❌ Error processing {pair_tf}: {e}")
                 print(traceback.format_exc())
     
         print(f"\n✨ FEATURE ENGINEERING COMPLETE. {processed_count} datasets processed.")
