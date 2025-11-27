@@ -1,7 +1,5 @@
 ### **File: `autoTrader/db_connector.py`**
 
-# db_connector.py
-
 import os
 import sqlite3
 import pandas as pd
@@ -18,7 +16,7 @@ class DatabaseConnector:
     """
     Centralized connection and persistence layer for the trading system.
     Handles I/O for feature data and strategy storage.
-    Thread-safe implementation with duplicate handling.
+    Thread-safe implementation with batch processing for large datasets.
     """
     
     def __init__(self, db_path: str = None):
@@ -33,7 +31,7 @@ class DatabaseConnector:
         
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)        
         
-        # Thread Lock to prevent "bad parameter" and concurrency errors
+        # Thread Lock to prevent concurrency errors
         self._lock = threading.RLock()
         
         self.conn = None
@@ -43,7 +41,6 @@ class DatabaseConnector:
     def connect(self):
         """Establishes connection with optimizations for concurrency."""
         try:
-            # check_same_thread=False allows sharing, but we manage locking manually
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
             self.conn.row_factory = sqlite3.Row
             
@@ -346,7 +343,7 @@ class DatabaseConnector:
     def upsert_raw_ohlcv(self, df_raw: pd.DataFrame, pair_tf: str):
         """
         Inserts raw OHLCV data into features_data using INSERT OR IGNORE.
-        This prevents UNIQUE constraint failures and preserves existing features.
+        Includes chunking for stability.
         """
         if not self.conn or df_raw.empty:
             return
@@ -359,18 +356,18 @@ class DatabaseConnector:
         cols_to_save = ['timestamp', 'pair_tf', 'open', 'high', 'low', 'close', 'volume']
         df_to_save = df_raw.reindex(columns=cols_to_save, fill_value=None)
         
-        with self._lock: # Lock is essential for temp table operations
+        with self._lock:
             try:
-                # 1. Write to temporary table
+                # 1. Write to temporary table with chunking
                 df_to_save.to_sql(
                     'temp_raw_ohlcv', 
                     self.conn, 
                     if_exists='replace', 
                     index=False,
+                    chunksize=5000  # <--- Added chunking
                 )
                 
                 # 2. Perform INSERT OR IGNORE from temp table to main table
-                # This explicitly ignores rows that violate the (timestamp, pair_tf) unique constraint
                 cols_str = ", ".join(cols_to_save)
                 cursor = self.conn.cursor()
                 cursor.execute(f"""
@@ -489,6 +486,7 @@ class DatabaseConnector:
         """
         Updates the database table with ALL available columns from df_features.
         Uses INSERT OR REPLACE to update features for existing rows.
+        Includes chunking to handle massive feature sets (e.g. 1m timeframe).
         """
         if not self.conn or df_features.empty:
             return
@@ -503,12 +501,16 @@ class DatabaseConnector:
             try:
                 self._check_and_add_columns(df_to_save, 'features_data') 
                 
-                # Write to temp table
+                # Clean up any potential stale temp table from previous crashes
+                self.conn.execute("DROP TABLE IF EXISTS features_data_temp;")
+                
+                # Write to temp table using chunking
                 df_to_save.to_sql(
                     'features_data_temp', 
                     self.conn, 
                     if_exists='replace', 
-                    index=False
+                    index=False,
+                    chunksize=5000 # <--- CRITICAL FIX FOR 400k+ ROWS
                 )
                 
                 cursor = self.conn.cursor()
