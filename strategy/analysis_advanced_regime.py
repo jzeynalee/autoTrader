@@ -37,7 +37,7 @@ if GaussianHMM: HMM_AVAILABLE = True
 import xgboost as xgb
 if xgb: XGB_AVAILABLE = True
 
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 if StandardScaler and train_test_split: SKLEARN_AVAILABLE = True
 
@@ -628,6 +628,7 @@ class XGBoostRegimePredictor:
     Supervised regime prediction using XGBoost.
     
     Predicts next swing's regime given current structural and behavioral context.
+    Fixed: Uses LabelEncoder to handle non-contiguous HMM states (e.g. 0, 1, 3, 5).
     """
     
     def __init__(self, n_regimes: int = 6, random_state: int = 42):
@@ -637,23 +638,19 @@ class XGBoostRegimePredictor:
         self.n_regimes = n_regimes
         self.random_state = random_state
         self.model = None
+        self.label_encoder = None  # <--- Added
         self.feature_columns = []
         self.feature_importance = {}
-        self.use_gpu: bool = True
     
     def fit(self, swing_df: pd.DataFrame, hmm_labels: np.ndarray) -> None:
         """
-        Train XGBoost to predict next regime.
-        
-        Args:
-            swing_df: DataFrame from HybridSwingRegistry with features
-            hmm_labels: Current regime labels from HMM
+        Train XGBoost to predict next regime with label encoding.
         """
         # Add HMM regime as feature
         swing_df = swing_df.copy()
         swing_df['current_regime'] = hmm_labels
         
-        # Select all features (continuous + discrete)
+        # Select all features
         self.feature_columns = [
             'current_regime', 'magnitude_pct', 'duration', 'local_slope',
             'return_gradient', 'directional_persistence', 'atr_ratio',
@@ -669,29 +666,34 @@ class XGBoostRegimePredictor:
         swing_df['structure_numeric'] = swing_df['structure_type'].map(structure_map).fillna(0)
         self.feature_columns.append('structure_numeric')
         
-        # Prepare features and target
+        # Prepare features (X)
         X = swing_df[self.feature_columns].fillna(0).values
         
-        # Target is next regime (shift labels forward)
-        y = np.roll(hmm_labels, -1)
+        # Target (y) is next regime
+        y_raw = np.roll(hmm_labels, -1)
         
         # Remove last row (no future regime)
         X = X[:-1]
-        y = y[:-1]
-        
-        # Adjust n_regimes to actual observed regimes to prevent class errors
-        actual_n_classes = int(max(np.max(hmm_labels), np.max(y))) + 1
+        y_raw = y_raw[:-1]
         
         try:
+            # === CRITICAL FIX: ENCODE LABELS ===
+            # This maps non-contiguous HMM labels (0, 2, 5) to (0, 1, 2)
+            self.label_encoder = LabelEncoder()
+            y_encoded = self.label_encoder.fit_transform(y_raw)
+            
+            # Determine actual number of classes present in data
+            actual_num_class = len(self.label_encoder.classes_)
+            
             # Split chronologically (80/20)
             split_idx = int(len(X) * 0.8)
             X_train, X_test = X[:split_idx], X[split_idx:]
-            y_train, y_test = y[:split_idx], y[split_idx:]
+            y_train, y_test = y_encoded[:split_idx], y_encoded[split_idx:]
             
             # Train XGBoost
             self.model = xgb.XGBClassifier(
                 objective='multi:softprob',
-                num_class=self.n_regimes,
+                num_class=actual_num_class,  # Use actual count, not theoretical max
                 max_depth=6,
                 learning_rate=0.1,
                 n_estimators=100,
@@ -714,26 +716,15 @@ class XGBoostRegimePredictor:
         except Exception as e:
             logger.error(f"  ❌ XGBoost training failed: {e}")
             self.model = None
-        
-        '''# Evaluate
-        from sklearn.metrics import accuracy_score, classification_report
-        
-        y_pred_train = self.model.predict(X_train)
-        y_pred_test = self.model.predict(X_test)
-        
-        train_acc = accuracy_score(y_train, y_pred_train)
-        test_acc = accuracy_score(y_test, y_pred_test)'''
-        
+            self.label_encoder = None
+
     def predict(self, swing_df: pd.DataFrame, current_regimes: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Predict next regime for each swing.
-        
-        Returns:
-            predicted_regimes: Array of predicted regime IDs
-            confidences: Array of prediction confidence scores
+        Predict next regime for each swing and map back to HMM labels.
         """
-        if self.model is None:
-            raise ValueError("Model not trained. Call fit() first.")
+        if self.model is None or self.label_encoder is None:
+            # Return defaults if training failed
+            return np.zeros(len(swing_df), dtype=int), np.zeros(len(swing_df), dtype=float)
         
         # Add current regime as feature
         swing_df = swing_df.copy()
@@ -747,12 +738,18 @@ class XGBoostRegimePredictor:
         X = swing_df[self.feature_columns].fillna(0).values
         
         try:
-            # Predict
-            predicted_regimes = self.model.predict(X)
+            # Predict internal IDs (0, 1, 2...)
+            pred_internal = self.model.predict(X)
             probabilities = self.model.predict_proba(X)
-            confidences = probabilities.max(axis=1)        
+            confidences = probabilities.max(axis=1)
+            
+            # === CRITICAL FIX: DECODE LABELS ===
+            # Map (0, 1, 2) back to (0, 2, 5)
+            predicted_regimes = self.label_encoder.inverse_transform(pred_internal.astype(int))
+            
             return predicted_regimes, confidences
-        except Exception:
+        except Exception as e:
+            logger.error(f"Prediction logic error: {e}")
             return np.zeros(len(swing_df), dtype=int), np.zeros(len(swing_df), dtype=float)
     
     def get_feature_importance_report(self) -> str:
@@ -764,7 +761,6 @@ class XGBoostRegimePredictor:
         report += "XGBOOST FEATURE IMPORTANCE\n"
         report += "="*80 + "\n\n"
         
-        # Sort by importance
         sorted_features = sorted(
             self.feature_importance.items(),
             key=lambda x: x[1],
@@ -775,7 +771,6 @@ class XGBoostRegimePredictor:
             report += f"{i:2d}. {feature:30s} {importance:.4f}\n"
         
         return report
-
 
 # ============================================================================
 # SECTION 6: MAIN REGIME DETECTION SYSTEM
