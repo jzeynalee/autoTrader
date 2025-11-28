@@ -8,9 +8,9 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from autoTrader.db_connector import DatabaseConnector
-from autoTrader.strategy.newML.pipeline import RegimePipeline
-from autoTrader.strategy.newML.strategy import RegimeAwareStrategy
+from ...db_connector import DatabaseConnector
+from .pipeline import RegimePipeline
+from .strategy import RegimeAwareStrategy
 
 class StrategyClassBacktester:
     def __init__(self, db_path: str, pair_tf: str, initial_balance: float = 10000.0):
