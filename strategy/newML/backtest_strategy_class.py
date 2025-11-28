@@ -8,10 +8,9 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from ...db_connector import DatabaseConnector
-from .pipeline import RegimePipeline
-from .features import FeatureRegistry, WindowConfig
-from .strategy import RegimeAwareStrategy
+from autoTrader.db_connector import DatabaseConnector
+from autoTrader.strategy.newML.pipeline import RegimePipeline
+from autoTrader.strategy.newML.strategy import RegimeAwareStrategy
 
 class StrategyClassBacktester:
     def __init__(self, db_path: str, pair_tf: str, initial_balance: float = 10000.0):
@@ -19,149 +18,129 @@ class StrategyClassBacktester:
         self.pair_tf = pair_tf
         self.initial_balance = initial_balance
         self.balance = initial_balance
-        
-        # Performance Tracking
         self.equity_curve = []
         self.trades = []
         
-    def load_and_prep(self):
-        print(f"Loading data for {self.pair_tf}...")
-        df = self.db.load_raw_ohlcv(self.pair_tf)
+    def load_data(self):
+        print(f"Loading FULL feature data for {self.pair_tf}...")
+        df = self.db.load_full_features(self.pair_tf)
         if df is None or df.empty:
             raise ValueError(f"No data found for {self.pair_tf}")
         
-        # Calculate ATR for stop loss logic (needed for position sizing simulation)
-        # Simple ATR implementation
-        high_low = df['high'] - df['low']
-        high_close = np.abs(df['high'] - df['close'].shift())
-        low_close = np.abs(df['low'] - df['close'].shift())
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        true_range = np.max(ranges, axis=1)
-        df['atr'] = true_range.rolling(14).mean()
-        
-        # Add SMA for Trend Logic (to mimic production signal)
+        # Ensure standard columns exist
+        df['atr'] = (df['high'] - df['low']).rolling(14).mean()
         df['sma_50'] = df['close'].rolling(50).mean()
         
-        df.dropna(inplace=True)
+        # FIX: Only drop NaNs for columns strictly needed for the backtest
+        # A blanket df.dropna() might wipe data if 'rsi' column exists in DB but is NULL
+        df.dropna(subset=['close', 'sma_50', 'atr'], inplace=True)
+        
         return df
 
     def run(self, train_ratio=0.3):
-        df = self.load_and_prep()
+        df = self.load_data()
         
-        # 1. Split Data
+        if len(df) < 100:
+            print("❌ Insufficient data to run backtest.")
+            return
+
+        # Split Data
         split_idx = int(len(df) * train_ratio)
         df_train = df.iloc[:split_idx]
         df_test = df.iloc[split_idx:].copy()
         
-        # 2. Train Pipeline (Bootstrap)
-        print("Bootstrapping ML Pipeline...")
-        registry = FeatureRegistry()
-        config = WindowConfig(window_size=32)
-        X_train = []
-        for i in range(config.window_size, len(df_train)):
-            feat = registry.build_window(df_train, i, config)
-            X_train.append(feat)
-            
-        pipeline = RegimePipeline(n_components=3, seed=42)
-        pipeline.fit(np.array(X_train))
+        if df_test.empty:
+            print("❌ Test set is empty. Check train_ratio or data size.")
+            return
         
-        # 3. Initialize Strategy Class
-        print("Initializing RegimeAwareStrategy...")
-        strategy = RegimeAwareStrategy(pipeline=pipeline)
+        # Use existing model file if present, or None
+        model_path = "./models/regime_pipeline_v1.pkl"
         
-        # 4. Pre-fill Strategy Buffer with Training Data
-        # This prevents the 'warming_up' state at the start of the test
+        print("Initializing RegimeAwareStrategy with DB Logic...")
+        strategy = RegimeAwareStrategy(
+            model_path=model_path, 
+            db_path=self.db.db_path,
+            pair_tf=self.pair_tf
+        )
+        
+        # Warmup
         print("Warming up strategy buffer...")
-        warmup_data = df_train.iloc[-50:] # Feed last 50 bars
-        for idx, row in warmup_data.iterrows():
-            strategy.on_bar(idx, row['open'], row['high'], row['low'], row['close'], row['volume'])
+        warmup = df_train.iloc[-50:]
+        for idx, row in warmup.iterrows():
+            feats = row.to_dict()
+            strategy.on_bar(idx, row['open'], row['high'], row['low'], row['close'], row['volume'], extra_features=feats)
 
-        # 5. Run Event Loop
-        print(f"Running Event-Driven Backtest on {len(df_test)} bars...")
+        print(f"Running Logic-Driven Backtest on {len(df_test)} bars...")
         
-        current_position = None # { 'entry': float, 'qty': float, 'stop': float }
+        current_position = None 
         
         for i in tqdm(range(len(df_test))):
             bar = df_test.iloc[i]
             ts = df_test.index[i]
+            feats = bar.to_dict()
             
-            # A. Update Strategy
-            instruction = strategy.on_bar(ts, bar['open'], bar['high'], bar['low'], bar['close'], bar['volume'])
+            # --- 1. GET STRATEGY INSTRUCTION ---
+            instruction = strategy.on_bar(ts, bar['open'], bar['high'], bar['low'], bar['close'], bar['volume'], extra_features=feats)
             
-            # B. Manage Existing Position
+            # --- 2. EXIT LOGIC ---
             if current_position:
-                # Check Stop Loss
+                # Stop Loss
                 if bar['low'] <= current_position['stop']:
-                    # Stop Hit
-                    exit_price = current_position['stop']
-                    pnl = (exit_price - current_position['entry']) * current_position['qty']
+                    pnl = (current_position['stop'] - current_position['entry']) * current_position['qty']
                     self.balance += pnl
-                    self.trades.append({'res': 'loss', 'pnl': pnl, 'regime': instruction.regime_name})
+                    self.trades.append({'res': 'loss', 'pnl': pnl})
                     current_position = None
                 
-                # Check Regime Exit (Force Close if Bearish)
-                elif not instruction.can_trade:
-                    # ML says GET OUT
-                    exit_price = bar['close']
-                    pnl = (exit_price - current_position['entry']) * current_position['qty']
+                # Logic Exit (If strategy flipped to Bearish)
+                elif instruction.signal_type == 'BEARISH':
+                    pnl = (bar['close'] - current_position['entry']) * current_position['qty']
                     self.balance += pnl
-                    self.trades.append({'res': 'regime_exit', 'pnl': pnl, 'regime': instruction.regime_name})
+                    self.trades.append({'res': 'logic_exit', 'pnl': pnl})
                     current_position = None
-                    
-                # Take Profit / Re-eval (Simplified: Close after 1 bar to isolate alpha, 
-                # OR hold. Let's hold until Stop or Regime Exit for realism)
                 else:
-                    # Mark-to-Market Equity
-                    unrealized_pnl = (bar['close'] - current_position['entry']) * current_position['qty']
-                    self.equity_curve.append(self.balance + unrealized_pnl)
+                    self.equity_curve.append(self.balance)
                     continue
 
-            # C. Entry Logic
-            # Only enter if flat
+            # --- 3. ENTRY LOGIC ---
             if current_position is None:
-                # Mock Signal: Trend Following (Close > SMA)
-                trend_signal = bar['close'] > bar['sma_50']
+                should_enter = False
                 
-                # SPECIAL RULE: If Regime is 'Aggressive' (2), ignore SMA and force entry
-                if instruction.mode == 'aggressive':
-                    trend_signal = True
+                # NEW LOGIC: Use the formulated signal!
+                if instruction.signal_type == 'BULLISH':
+                    should_enter = True # Statistical Mining says BUY
                 
-                if trend_signal and instruction.can_trade:
-                    # Calculate Stop Loss
-                    # Use the multiplier from the instruction
+                # Fallback: Conservative Trend
+                elif instruction.mode == 'conservative' and bar['close'] > bar['sma_50']:
+                    should_enter = True 
+                
+                if should_enter and instruction.can_trade:
                     stop_dist = bar['atr'] * instruction.stop_loss_multiplier
                     stop_price = bar['close'] - stop_dist
                     
-                    # Calculate Position Size (Dynamic Risk)
-                    qty = strategy.calculate_position_size(
-                        balance=self.balance, 
-                        entry=bar['close'], 
-                        stop=stop_price, 
-                        instr=instruction
-                    )
+                    qty = strategy.calculate_position_size(self.balance, bar['close'], stop_price, instruction)
                     
                     if qty > 0:
-                        current_position = {
-                            'entry': bar['close'],
-                            'qty': qty,
-                            'stop': stop_price
-                        }
+                        current_position = {'entry': bar['close'], 'qty': qty, 'stop': stop_price}
             
             self.equity_curve.append(self.balance)
 
         self._report()
 
     def _report(self):
+        if not self.equity_curve:
+            print("⚠️ No equity curve data generated (Loop didn't run or data empty).")
+            return
+
         eq = np.array(self.equity_curve)
-        
-        # Metrics
         total_ret = (self.balance - self.initial_balance) / self.initial_balance * 100
+        
         max_dd = 0
         peak = eq[0]
         for val in eq:
             if val > peak: peak = val
-            dd = (val - peak) / peak
-            if dd < max_dd: max_dd = dd
+            if peak > 0:
+                dd = (val - peak) / peak
+                if dd < max_dd: max_dd = dd
             
         wins = len([t for t in self.trades if t['pnl'] > 0])
         total = len(self.trades)
@@ -173,20 +152,11 @@ class StrategyClassBacktester:
         print(f"Final Balance: ${self.balance:.2f}")
         print(f"Total Return:   {total_ret:.2f}%")
         print(f"Max Drawdown:   {max_dd*100:.2f}%")
-        print(f"Total Trades:   {total}")
-        print(f"Win Rate:       {win_rate:.2f}%")
+        print(f"Win Rate:       {win_rate:.2f}% ({wins}/{total})")
         print("="*40)
-        
-        if total_ret > 0 and abs(max_dd) < 0.25:
-             print("✅ PASS: Strategy logic is profitable and risk-controlled.")
-        elif total_ret > 0:
-             print("⚠️ PASS/WARN: Profitable but High Drawdown. Check risk params.")
-        else:
-             print("❌ FAIL: Strategy lost money.")
 
 if __name__ == "__main__":
     DB_PATH = "./data/auto_trader_db.sqlite" 
     PAIR_TF = "btc_usdt_1h"
-    
     bt = StrategyClassBacktester(DB_PATH, PAIR_TF)
     bt.run()
